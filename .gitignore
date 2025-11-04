@@ -1,0 +1,34 @@
+# Ignore build output and intermediate files
+*.o
+*.d
+*.elf
+*.lss
+*.map
+*.eep
+*.hex
+*.srec
+
+# Ignore Atmel Studio build folders
+Release/
+
+# Ignore generated Makefiles and dependency files
+Makefile
+makedep.mk
+
+# Ignore solution and user-specific files
+*.componentinfo.xml
+
+# Ignore local IDE settings (per-user)
+*.atsuo
+*.user
+*.vs/
+*.vscode/
+
+# Miscellaneous
+*.log
+*.tmp
+*.bak
+
+# OS-specific
+Thumbs.db
+.DS_Store
