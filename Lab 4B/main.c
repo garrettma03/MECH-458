@@ -4,11 +4,16 @@
 #include "myutils.h"
 
 // define the global variables that can be used in every function ==========
-volatile unsigned char ADC_result;
+volatile unsigned int ADC_result;
 volatile unsigned int ADC_result_flag;
 volatile unsigned int dir = 1;
 volatile unsigned int killswitch = 0;
 volatile unsigned int change_dir_req = 0;
+volatile uint8_t high_byte = 0;
+volatile uint8_t low_byte = 0;
+volatile uint8_t PWM_8bit = 0;
+volatile uint8_t end_gate = 0;
+volatile unsigned int cur_value = 1024;
 
 // Function Definitions
 void mTimer (int count);	/* This is a millisecond timer, using Timer1 */
@@ -22,7 +27,7 @@ int main() {
 
 	/* Used for debugging purposes only LEDs on PORTC */
 	DDRC = 0xFF; //Set PORTC to output
-	DDRA = 0xFF; //Set PORTA to output
+	DDRA = 0x00; //Set PORTA to input
     DDRB = 0xFF; // Step 6
 
 	//Start PWM in the background
@@ -46,6 +51,8 @@ int main() {
 	EICRA |= (_BV(ISC01) | _BV(ISC00));
 	EIMSK |= (_BV(INT1)); // Change direction on PD1
 	EICRA |= (_BV(ISC11) | _BV(ISC10));
+    EIMSK |= (_BV(INT3)); // End gate on PD3
+	EICRA |= (_BV(ISC31) | _BV(ISC30));
 
 	// config ADC =========================================================
 	// by default, the ADC input (analog input is set to be ADC0 / PORTF0
@@ -69,7 +76,7 @@ int main() {
 	dir = 1;
 	killswitch = 0;
 	
-	OCR0A = ADC_result; // Maps ADC to duty cycle for the PWM
+	OCR0A = 90; // Maps ADC to duty cycle for the PWM
 	PORTB = 0b00001110; // Start clockwise
 	
 	while (1){
@@ -81,6 +88,10 @@ int main() {
 			LCDWriteStringXY(0,0,"KILLSWITCH ON");
 			LCDWriteStringXY(0,1,"MOTOR STOPPED");
 			return 0;
+		}
+		
+		if(end_gate){
+			end_gate = 0;
 		}
 
         if (change_dir_req) {
@@ -103,39 +114,41 @@ int main() {
         }
 		
         if (ADC_result_flag){
-        
-            OCR0A = ADC_result; // Maps ADC to duty cycle for the PWM
-            PORTC = ADC_result;
-            ADC_result_flag = 0x00;
-            ADCSRA |= _BV(ADSC);
-            
-            int duty = (ADC_result * 100) / 255; // Turns the 8 bit ADC reading into a percentage 0-100
+			
+			//Clear interrupt flag
+			ADC_result_flag = 0;
 
-            // Write ADC value to LCD
+            // Clear the screen first
             LCDClear();
-            LCDWriteStringXY(0,0,"ADC:");
-            LCDWriteInt(ADC_result,3);
 
-            // Write PWM duty cycle to LCD
-            LCDWriteStringXY(8,0,"PWM:");
-            LCDWriteInt(duty,3);
-            LCDWriteStringXY(15,0,"%");
-            
-            // Write Direction to LCD
-            LCDWriteStringXY(0,1,"Dir:");
-            if (dir){
-                LCDWriteStringXY(4,1,"CCW ");
-            } else {
-                LCDWriteStringXY(4,1,"CW  ");
+            if(ADC_result < cur_value){
+                cur_value = ADC_result;
             }
+			
+			// Write ADC value to RL
+			LCDWriteStringXY(0,0,"RL:");
+			LCDWriteIntXY(4,0,cur_value,3);
+
+            // // Write PWM duty cycle to LCD
+            // LCDWriteStringXY(8,0,"PWM:");
+            // LCDWriteIntXY(12,0,duty,3);
+            // LCDWriteStringXY(15,0,"%");
             
-            // Write Kill Switch status to LCD
-            LCDWriteStringXY(8,1,"KS:");
-            if(killswitch){
-                LCDWriteStringXY(11,1,"ON ");
-            } else {
-                LCDWriteStringXY(11,1,"OFF");
-            }
+            // // Write Direction to LCD
+            // LCDWriteStringXY(0,1,"Dir:");
+            // if (dir){
+            //     LCDWriteStringXY(4,1,"CCW ");
+            // } else {
+            //     LCDWriteStringXY(4,1,"CW  ");
+            // }
+            
+            // // Write Kill Switch status to LCD
+            // LCDWriteStringXY(8,1,"KS:");
+            // if(killswitch){
+            //     LCDWriteStringXY(11,1,"ON ");
+            // } else {
+            //     LCDWriteStringXY(11,1,"OFF");
+            // }
         }
 	}
 	
@@ -157,9 +170,16 @@ ISR(INT2_vect) { // when there is a rising edge, we need to do ADC =============
 	ADCSRA |= _BV(ADSC);
 }
 
+ISR(INT3_vect){ // ISR for end gate active low
+	PORTB = 0x0F; // Brake
+	end_gate = 1;
+}
+
 // the interrupt will be trigured if the ADC is done ========================
 ISR(ADC_vect) {
-	ADC_result = ADCH;
+	low_byte = ADCL;
+    high_byte = ADCH;
+	ADC_result = high_byte << 2 | (low_byte >> 6); // combine ADCH and ADCL for full 10-bit value
 	ADC_result_flag = 1;
 }
 
@@ -206,8 +226,7 @@ void mTimer (int count)
 }  /* mTimer */
 
 void pwmSetup(){
-	PORTC = 0xFF;
-		
+
 	TCCR0A |= 0b00000011; // Set TCCR0A to Fast PWM mode and clear upon reaching compare match STEP 1
 		
 	TCCR0A |= 0b10000000; // Clear OC0A on Compare Match, set OC0A at BOTTOM (non-inverting mode) STEP 3
