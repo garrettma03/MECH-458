@@ -27,6 +27,7 @@
 //volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101}; //half step
 volatile int stepperMotor[4] = {0b110110, 0b101101, 0b110110, 0b101101};   //full step?
 volatile int count = 0;
+volatile int accSpeed = 20;
 
 // Function Definitions
 void mTimer (int count);	/* This is a millisecond timer, using Timer1 */
@@ -73,7 +74,7 @@ void nTurn(int n, int direction){
                 break;
                 
             case 180:
-                int accSpeed = 20;
+                accSpeed = 20;
                 steps = 100;
                 for(int i = 0; i < steps; i++){
                     if(i<50){
@@ -132,7 +133,7 @@ void nTurn(int n, int direction){
                 }
                 
             case 180:
-                int accSpeed = 20;
+                accSpeed = 20;
                 steps = 100;
                 for(int i = 0; i < steps; i++){
                     if(i<50){
