@@ -102,7 +102,7 @@ void nTurn(int n, int direction){
                 steps = 100;
                 for(int i = 0; i < steps; i++){
                     if(i<50){
-                        if(accSpeed > 5){
+                        if(accSpeed > 10){
                             PORTA = stepperMotor[count];
                             mTimer(accSpeed);
                             accSpeed = accSpeed - 1;
