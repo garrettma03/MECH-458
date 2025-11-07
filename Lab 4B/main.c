@@ -126,7 +126,7 @@ void nTurn(int n, int direction){
 
     }
 
-    if(direction == -1){ //Turn clockwise
+    if(direction == -1){ //Turn Couter clockwise
         switch(n){
             case 90:
                 steps = 50;
