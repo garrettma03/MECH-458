@@ -86,16 +86,60 @@ void nTurn(int n, int direction){
                 }
                 break;
             case 180:
+                // steps = 100;
+                // for(int i = 0; i < steps; i++){
+                //     PORTA = stepperMotor[count];
+                //     mTimer(20);
+                //     count++;
+                //     if(count > 3){
+                //         count = 0;
+                //     }
+                // }
+                // break;
+                
+                case 180:
+                int accSpeed = 20;
                 steps = 100;
                 for(int i = 0; i < steps; i++){
-                    PORTA = stepperMotor[count];
-                    mTimer(20);
-                    count++;
-                    if(count > 3){
-                        count = 0;
+                    if(i<50){
+                        if(accSpeed > 5){
+                            PORTA = stepperMotor[count];
+                            mTimer(accSpeed);
+                            accSpeed = accSpeed - 1;
+                            count++;
+                            if(count > 3){
+                                count = 0;
+                            }
+                        }else{
+                            PORTA = stepperMotor[count];
+                            mTimer(accSpeed);
+                            count++;
+                            if(count > 3){
+                                count = 0;
+                            }
+                        } 
+                    }else{
+                        if(accSpeed < 21){
+                            PORTA = stepperMotor[count];
+                            mTimer(accSpeed);
+                            accSpeed = accSpeed + 1;
+                            count++;
+                            if(count > 3){
+                                count = 0;
+                            }
+                        }else{
+                            PORTA = stepperMotor[count];
+                            mTimer(accSpeed);
+                            count++;
+                            if(count > 3){
+                                count = 0;
+                            }
+                        } 
                     }
+                    
                 }
                 break;
+
         }
 
     }
