@@ -122,7 +122,7 @@ int main() {
         
             OCR0A = (ADC_result >> 2); // Lose the lower 2 bits
             
-            float pwm = (ADC_result * 100.0f) / 1023.0f; // Turns the 10-bit ADC reading into a percentage 0-100
+            int duty = (ADC_result / 1023) * 100; // Turns the 10-bit ADC reading into a percentage 0-100
 			
 			// Write ADC value to LCD
             LCDWriteStringXY(0,0,"ADC:");
@@ -130,7 +130,7 @@ int main() {
 
             // Write PWM duty cycle to LCD
             LCDWriteStringXY(8,0,"PWM:");
-            LCDWriteIntXY(12,0,(int)pwm,3); // Cast float back to int
+            LCDWriteIntXY(12,0,duty,3);
             LCDWriteStringXY(15,0,"%");
             
             // Write Direction to LCD
