@@ -43,14 +43,14 @@ int main(){
 	CLKPR = 0x01; //Set division factor to be 2
     while(1){
         nTurn(90, 1); //Turn 90 degrees clockwise
-        mTimer(1000);
+        mTimer(2000);
         nTurn(180, 1); //Turn 180 degrees clockwise
-        mTimer(1000);
+        mTimer(2000);
 
         nTurn(90, -1); //Turn 60 degrees counter clockwise
-        mTimer(1000);
+        mTimer(2000);
         nTurn(180, -1); //Turn 180 degrees counter clockwise
-        mTimer(1000);
+        mTimer(2000);
     }
 
     return 0;
