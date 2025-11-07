@@ -24,8 +24,8 @@
 							/* Make sure you read it!!! */
 /* global variables */
 /* Avoid using these */
-//volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101}; //half step
-volatile int stepperMotor[4] = {0b110110, 0b101101, 0b110110, 0b101101};   //full step?
+volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101}; //half step
+//volatile int stepperMotor[4] = {0b110110, 0b101101, 0b110110, 0b101101};   //full step?
 volatile int count = 0;
 volatile int accSpeed = 20;
 
@@ -147,8 +147,8 @@ void nTurn(int n, int direction){
                         PORTA = stepperMotor[count];
                         mTimer(accSpeed);
                         count--;
-                        if(count > 3){
-                            count = 0;
+                        if(count < 0){
+                            count = 3;
                         }
                     }else if(i<50){
                         if(accSpeed > 10){
@@ -156,15 +156,15 @@ void nTurn(int n, int direction){
                             mTimer(accSpeed);
                             accSpeed = accSpeed - 1;
                             count--;
-                            if(count > 3){
-                                count = 0;
+                            if(count < 0){
+                                count = 3;
                             }
                         }else{
                             PORTA = stepperMotor[count];
                             mTimer(accSpeed);
                             count--;
-                            if(count > 3){
-                                count = 0;
+                            if(count < 0){
+                                count = 3;
                             }
                         } 
                     }else{
@@ -173,15 +173,15 @@ void nTurn(int n, int direction){
                             mTimer(accSpeed);
                             accSpeed = accSpeed + 1;
                             count--;
-                            if(count > 3){
-                                count = 0;
+                            if(count < 0){
+                                count = 3;
                             }
                         }else{
                             PORTA = stepperMotor[count];
                             mTimer(accSpeed);
                             count--;
-                            if(count > 3){
-                                count = 0;
+                            if(count < 0){
+                                count = 3;
                             }
                         } 
                     }
