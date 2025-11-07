@@ -14,6 +14,7 @@ volatile uint8_t low_byte = 0;
 volatile uint8_t PWM_8bit = 0;
 volatile uint8_t end_gate = 0;
 volatile unsigned int cur_value = 1024;
+volatile unsigned int optical = 0;
 
 // Function Definitions
 void mTimer (int count);	/* This is a millisecond timer, using Timer1 */
@@ -42,16 +43,13 @@ int main() {
 	LCDClear();
 
 	// config the external interrupt ======================================
-	EIMSK |= (_BV(INT2)); // enable INT2
-	EICRA |= (_BV(ISC21) | _BV(ISC20)); // rising edge interrupt
-
-	// Config external interrupts for buttons for kill button and change direction
-	// When button is pressed, jump to ISR
 	EIMSK |= (_BV(INT0)); // Kill switch on PD0
 	EICRA |= (_BV(ISC01) | _BV(ISC00));
 	EIMSK |= (_BV(INT1)); // Change direction on PD1
 	EICRA |= (_BV(ISC11) | _BV(ISC10));
-    EIMSK |= (_BV(INT3)); // End gate on PD3
+	EIMSK |= (_BV(INT2)); // Optical Reflector on PD2 Pin 19
+	EICRA |= (_BV(ISC21) | _BV(ISC20)); // rising edge interrupt
+    EIMSK |= (_BV(INT3)); // End gate on PD3 Pin 18
 	EICRA |= (_BV(ISC31) | _BV(ISC30));
 
 	// config ADC =========================================================
@@ -92,6 +90,12 @@ int main() {
 		
 		if(end_gate){
 			end_gate = 0;
+		}
+
+		if(optical){
+			optical = 0;
+			ADCSRA |= _BV(ADSC); // Start ADC conversion
+			EIMSK |= _BV(INT2); // re-enable INT2	
 		}
 
         if (change_dir_req) {
@@ -165,9 +169,10 @@ ISR(INT1_vect){
     change_dir_req = 1;
 }
 
-// sensor switch: Active HIGH starts AD converstion =======
-ISR(INT2_vect) { // when there is a rising edge, we need to do ADC =====================
-	ADCSRA |= _BV(ADSC);
+// Optical reflector interrupt
+ISR(INT2_vect) { // Trigger ADC conversion when object in optical sensor
+	EIMSK &= ~_BV(INT2); // Disable INT2 to avoid retriggering
+	optical = 1;
 }
 
 ISR(INT3_vect){ // ISR for end gate active low
