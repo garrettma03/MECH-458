@@ -11,7 +11,7 @@ volatile unsigned int killswitch = 0;
 volatile unsigned int change_dir_req = 0;
 volatile uint8_t high_byte = 0;
 volatile uint8_t low_byte = 0;
-volatile uint8_t PWM_8bit = 0;
+volatile uint8_t calibrationValues[4];
 volatile uint8_t end_gate = 0;
 volatile unsigned int cur_value = 1024;
 volatile unsigned int optical = 0;
@@ -19,6 +19,8 @@ volatile unsigned int optical = 0;
 // Function Definitions
 void mTimer (int count);	/* This is a millisecond timer, using Timer1 */
 void pwmSetup();
+void calibration(void);
+void findBlack();
 
 int main() {
 	cli(); // disable all of the interrupt ==========================
@@ -51,6 +53,8 @@ int main() {
 	EICRA |= (_BV(ISC21) | _BV(ISC20)); // rising edge interrupt
     EIMSK |= (_BV(INT3)); // End gate on PD3 Pin 18
 	EICRA |= (_BV(ISC31) | _BV(ISC30));
+	EIMSK |= (_BV(INT4)); // Hall Effect on PE4 Pin 2
+	EICRA |= (_BV(ISC41) | _BV(ISC40));
 
 	// config ADC =========================================================
 	// by default, the ADC input (analog input is set to be ADC0 / PORTF0
@@ -76,6 +80,10 @@ int main() {
 	
 	OCR0A = 90; // Maps ADC to duty cycle for the PWM
 	PORTB = 0b00001110; // Start clockwise
+
+	calibration();
+	// Display results
+	mTimer(5000);
 	
 	while (1){
 
@@ -127,8 +135,8 @@ int main() {
 
             if(ADC_result < cur_value){
                 cur_value = ADC_result;
-            }
-			
+			}
+
 			// Write ADC value to RL
 			LCDWriteStringXY(0,0,"RL:");
 			LCDWriteIntXY(4,0,cur_value,3);
@@ -180,12 +188,78 @@ ISR(INT3_vect){ // ISR for end gate active low
 	end_gate = 1;
 }
 
+ISR(INT3_vect){ // ISR for end gate active low
+	PORTB = 0x0F; // Brake
+	end_gate = 1;
+}
+
 // the interrupt will be trigured if the ADC is done ========================
 ISR(ADC_vect) {
 	low_byte = ADCL;
     high_byte = ADCH;
 	ADC_result = high_byte << 2 | (low_byte >> 6); // combine ADCH and ADCL for full 10-bit value
 	ADC_result_flag = 1;
+}
+
+// Calibration function
+void calibration(void){
+    uint8_t samples_per_pass = 50;    // how many ADC reads to take per object
+    uint8_t i, j;
+
+    LCDClear();
+    LCDWriteStringXY(0,0,"Calibrating...");
+    LCDWriteStringXY(0,1,"Waiting for 4 passes");
+
+    for (i = 0; i < 4; i++) {
+
+		// Reset current value for this pass
+		cur_value = 1024;
+
+        // wait for optical event (set by ISR INT2)
+        while (!optical){
+			;
+		}
+        // consume the event
+        optical = 0;
+
+		// Make sure ADC is one-shot (not free-running)
+		ADCSRA &= ~_BV(ADATE);
+
+		// Clear any pending optical interrupt and enable INT2
+		EIFR |= _BV(INTF2);
+		EIMSK |= _BV(INT2);
+
+        // get several ADC samples while object is present and keep the minimum
+        for (j = 0; j < samples_per_pass; j++) {
+            ADCSRA |= _BV(ADSC);               // start single conversion
+            while (!ADC_result_flag) {  
+				;      // wait for ADC ISR to set flag
+            }
+            ADC_result_flag = 0;
+            if (ADC_result < cur_value){
+				cur_value = ADC_result;
+			}
+            mTimer(2); // short spacing between reads (adjust as needed)
+        }
+		
+        calibrationValues[i] = cur_value; // store lowest reading for this pass
+
+        // update LCD with values collected so far
+        LCDClear();
+        LCDWriteStringXY(0,0,"Cal:");
+        LCDWriteIntXY(3,0,calibrationValues[0],4);
+        LCDWriteIntXY(8,0,calibrationValues[1],4);
+        LCDWriteStringXY(0,1,"Cal:");
+        LCDWriteIntXY(3,1,calibrationValues[2],4);
+        LCDWriteIntXY(8,1,calibrationValues[3],4);
+
+        // re-arm interrupt for next pass (ISR(INT2) disables it)
+        EIFR |= _BV(INTF2);
+        EIMSK |= _BV(INT2);
+
+        // optional small delay to avoid false retrigger
+        mTimer(25);
+    }
 }
 
 // mTimer function
