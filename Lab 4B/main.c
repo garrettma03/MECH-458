@@ -1,186 +1,142 @@
-#include <avr/interrupt.h>
-#include <avr/io.h>
-#include "lcd.h"
-#include "myutils.h"
+/* Solution Set for the Lab 4A */
+/* 	
+	Course		: UVic Mechatronics 458
+	Milestone	: 4A
+	Title		: Data structures for MCUs and the Linked Queue Library
 
-// define the global variables that can be used in every function ==========
-volatile unsigned int ADC_result;
-volatile unsigned int ADC_result_flag;
-volatile unsigned int dir = 1;
-volatile unsigned int killswitch = 0;
-volatile unsigned int change_dir_req = 0;
-volatile uint8_t high_byte = 0;
-volatile uint8_t low_byte = 0;
-volatile uint8_t PWM_8bit = 0;
-volatile uint8_t end_gate = 0;
-volatile unsigned int cur_value = 1024;
+	Name 1:Garrett Ma					Student ID: V00976948
+	Name 2:Nikolas Clarke-Abatis		Student ID:
+	
+	Description: You can change the following after you read it.  Lab3 Demo
+	
+	This main routine will only serve as a testing routine for now. At some point you can comment out
+	The main routine, and can use the following library of functions in your other applications
+
+	To do this...make sure both the .C file and the .H file are in the same directory as the .C file
+	with the MAIN routine (this will make it more convenient)
+*/
+
+/* include libraries */
+#include <stdio.h>
+#include <stdlib.h>
+#include <avr/io.h>
+#include "LinkedQueue.h" 	/* This is the attached header file, which cleans things up */
+							/* Make sure you read it!!! */
+/* global variables */
+/* Avoid using these */
+volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101};
+volatile int count = 0;
 
 // Function Definitions
 void mTimer (int count);	/* This is a millisecond timer, using Timer1 */
-void pwmSetup();
+void nTurn(int n, int direction);
 
-int main() {
-	cli(); // disable all of the interrupt ==========================
+int main(){
+
+    /* Used for debugging purposes only LEDs on PORTC */
+	DDRC = 0xFF;
+	DDRA = 0xFF;		//Set PORTA to output
 
 	CLKPR = 0x80; //Enable bit 7 (clock prescale enable/disable
 	CLKPR = 0x01; //Set division factor to be 2
 
-	/* Used for debugging purposes only LEDs on PORTC */
-	DDRC = 0xFF; //Set PORTC to output
-	DDRA = 0x00; //Set PORTA to input
-    DDRB = 0xFF; // Step 6
+    nTurn(30, 1); //Turn 30 degrees clockwise
+    mTimer(1000);
+    nTurn(60, 1); //Turn 60 degrees clockwise
+    mTimer(1000);
+    nTurn(180, 1); //Turn 180 degrees clockwise
+    mTimer(1000);
 
-	//Start PWM in the background
-	pwmSetup();
+    nTurn(30, -1); //Turn 30 degrees counter clockwise
+    mTimer(1000);
+    nTurn(60, -1); //Turn 60 degrees counter clockwise
+    mTimer(1000);
+    nTurn(180, -1); //Turn 180 degrees counter clockwise
+    mTimer(1000);
 
-	// Init LCD
-	InitLCD(LS_BLINK);
-	LCDClear();
-	LCDWriteStringXY(0,0,"DC Motor Ready");
-	LCDWriteStringXY(0,1,"Hi");
-	mTimer(2000);
-	LCDClear();
+    return 0;
+}
 
-	// config the external interrupt ======================================
-	EIMSK |= (_BV(INT2)); // enable INT2
-	EICRA |= (_BV(ISC21) | _BV(ISC20)); // rising edge interrupt
-
-	// Config external interrupts for buttons for kill button and change direction
-	// When button is pressed, jump to ISR
-	EIMSK |= (_BV(INT0)); // Kill switch on PD0
-	EICRA |= (_BV(ISC01) | _BV(ISC00));
-	EIMSK |= (_BV(INT1)); // Change direction on PD1
-	EICRA |= (_BV(ISC11) | _BV(ISC10));
-    EIMSK |= (_BV(INT3)); // End gate on PD3
-	EICRA |= (_BV(ISC31) | _BV(ISC30));
-
-	// config ADC =========================================================
-	// by default, the ADC input (analog input is set to be ADC0 / PORTF0
-	ADCSRA |= _BV(ADEN); // enable ADC
-	ADCSRA |= _BV(ADIE); // enable interrupt of ADC
-	ADMUX |= _BV(ADLAR) | _BV(REFS0); // ADLAR sets the upper 2 bits of ADCL
-									  // to be the lower 2 of bits of the now 10-bit ADCH
-									  // REFS0 is bit 6 of the ADMUX register and sets
-									  // AVCC with external capacitor at AREF pin
-	ADCSRA |= 0x04; // set ADC prescaler = 16 (~488 kHz)
-	
-	// sets the Global Enable for all interrupts ==========================
-	sei();
-	
-	// initialize the ADC, start one conversion at the beginning ==========
-	ADCSRA |= 0x20; // Enable auto-trigger enable inside ADC status register
-	ADCSRB |= 0x00; // Set ADC Auto Trigger Source to Free Running Mode
-	ADCSRA |= _BV(ADSC);
-	
-	//Motor implementation
-	dir = 1;
-	killswitch = 0;
-	
-	OCR0A = 90; // Maps ADC to duty cycle for the PWM
-	PORTB = 0b00001110; // Start clockwise
-	
-	while (1){
-
-		if(killswitch){
-			PORTB = 0x0F; // Brake
-			cli(); // Clear all interrupts
-			LCDClear();
-			LCDWriteStringXY(0,0,"KILLSWITCH ON");
-			LCDWriteStringXY(0,1,"MOTOR STOPPED");
-			return 0;
-		}
-		
-		if(end_gate){
-			end_gate = 0;
-		}
-
-        if (change_dir_req) {
-            mTimer(20); // debounce delay
-            if (PIND & _BV(PD1)) { // still pressed
-                PORTB = 0x0F; // Brake
-                if (dir) {
-                    dir = 0;
-                    PORTB = 0x0D;
-                } else {
-                    dir = 1;
-                    PORTB = 0x0E;
+// nTurn function
+void nTurn(int n, int direction){
+    int steps;
+    if(direction == 1){ //Turn clockwise
+        switch(n){
+            case 30:
+                steps = 17;
+                for(int i = 0; i < steps; i++){
+                    PORTA = stepperMotor[count];
+                    mTimer(20);
+                    count++;
+                    if(count > 3){
+                        count = 0;
+                    }
                 }
-                // Wait until button is released
-                while (PIND & _BV(PD1));
-				mTimer(20);
-            }
-            change_dir_req = 0;
-            EIMSK |= _BV(INT1); // re-enable INT1
+                break;
+            case 60:
+                steps = 33;
+                for(int i = 0; i < steps; i++){
+                    PORTA = stepperMotor[count];
+                    mTimer(20);
+                    count++;
+                    if(count > 3){
+                        count = 0;
+                    }
+                }
+                break;
+            case 180:
+                steps = 100;
+                for(int i = 0; i < steps; i++){
+                    PORTA = stepperMotor[count];
+                    mTimer(20);
+                    count++;
+                    if(count > 3){
+                        count = 0;
+                    }
+                }
+                break;
         }
-		
-        if (ADC_result_flag){
-			
-			//Clear interrupt flag
-			ADC_result_flag = 0;
 
-            // Clear the screen first
-            LCDClear();
+    }
 
-            if(ADC_result < cur_value){
-                cur_value = ADC_result;
-            }
-			
-			// Write ADC value to RL
-			LCDWriteStringXY(0,0,"RL:");
-			LCDWriteIntXY(4,0,cur_value,3);
-
-            // // Write PWM duty cycle to LCD
-            // LCDWriteStringXY(8,0,"PWM:");
-            // LCDWriteIntXY(12,0,duty,3);
-            // LCDWriteStringXY(15,0,"%");
-            
-            // // Write Direction to LCD
-            // LCDWriteStringXY(0,1,"Dir:");
-            // if (dir){
-            //     LCDWriteStringXY(4,1,"CCW ");
-            // } else {
-            //     LCDWriteStringXY(4,1,"CW  ");
-            // }
-            
-            // // Write Kill Switch status to LCD
-            // LCDWriteStringXY(8,1,"KS:");
-            // if(killswitch){
-            //     LCDWriteStringXY(11,1,"ON ");
-            // } else {
-            //     LCDWriteStringXY(11,1,"OFF");
-            // }
+    if(direction == -1){ //Turn clockwise
+        switch(n){
+            case 30:
+                steps = 17;
+                for(int i = 0; i < steps; i++){
+                    PORTA = stepperMotor[count];
+                    mTimer(20);
+                    count--;
+                    if(count < 0){
+                        count = 3;
+                    }
+                }
+                break;
+            case 60:
+                steps = 33;
+                for(int i = 0; i < steps; i++){
+                    PORTA = stepperMotor[count];
+                    mTimer(20);
+                    count--;
+                    if(count < 0){
+                        count = 3;
+                    }
+                }
+                break;
+            case 180:
+                steps = 100;
+                for(int i = 0; i < steps; i++){
+                    PORTA = stepperMotor[count];
+                    mTimer(20);
+                    count--;
+                    if(count < 0){
+                        count = 3;
+                    }
+                }
+                break;
         }
-	}
-	
-	return 0;
-} // end main
 
-ISR(INT0_vect){ // Kill Switch
-	killswitch = 1;
-}
-
-ISR(INT1_vect){ 
-	// Disable INT1 to avoid bounces triggering repeatedly
-    EIMSK &= ~_BV(INT1);
-    change_dir_req = 1;
-}
-
-// sensor switch: Active HIGH starts AD converstion =======
-ISR(INT2_vect) { // when there is a rising edge, we need to do ADC =====================
-	ADCSRA |= _BV(ADSC);
-}
-
-ISR(INT3_vect){ // ISR for end gate active low
-	PORTB = 0x0F; // Brake
-	end_gate = 1;
-}
-
-// the interrupt will be trigured if the ADC is done ========================
-ISR(ADC_vect) {
-	low_byte = ADCL;
-    high_byte = ADCH;
-	ADC_result = high_byte << 2 | (low_byte >> 6); // combine ADCH and ADCL for full 10-bit value
-	ADC_result_flag = 1;
+    }
 }
 
 // mTimer function
@@ -224,14 +180,3 @@ void mTimer (int count)
    TCCR1B &= ~_BV (CS11);  //  disable prescalar, no Clock
    return;
 }  /* mTimer */
-
-void pwmSetup(){
-
-	TCCR0A |= 0b00000011; // Set TCCR0A to Fast PWM mode and clear upon reaching compare match STEP 1
-		
-	TCCR0A |= 0b10000000; // Clear OC0A on Compare Match, set OC0A at BOTTOM (non-inverting mode) STEP 3
-		
-	TCCR0B |= 0x02; // Set to no prescaling to 64 STEP 4
-		
-	OCR0A = 128; // Step 5
-}
