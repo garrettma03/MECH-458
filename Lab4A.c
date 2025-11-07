@@ -24,7 +24,8 @@
 							/* Make sure you read it!!! */
 /* global variables */
 /* Avoid using these */
-volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101};
+//volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101};
+volatile int stepperMotor[4] = {0b110110, 0b101101, 0b110110, 0b101101};
 volatile int count = 0;
 
 // Function Definitions
