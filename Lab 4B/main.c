@@ -1,3 +1,4 @@
+//10-bit backwards
 #include <avr/interrupt.h>
 #include <avr/io.h>
 #include "lcd.h"
@@ -13,7 +14,6 @@ volatile uint8_t high_byte = 0;
 volatile uint8_t low_byte = 0;
 volatile uint8_t PWM_8bit = 0;
 volatile uint8_t end_gate = 0;
-volatile unsigned int cur_value = 1024;
 
 // Function Definitions
 void mTimer (int count);	/* This is a millisecond timer, using Timer1 */
@@ -76,7 +76,7 @@ int main() {
 	dir = 1;
 	killswitch = 0;
 	
-	OCR0A = 90; // Maps ADC to duty cycle for the PWM
+	OCR0A = (ADC_result >> 2); // Maps ADC to duty cycle for the PWM
 	PORTB = 0b00001110; // Start clockwise
 	
 	while (1){
@@ -120,35 +120,37 @@ int main() {
 
             // Clear the screen first
             LCDClear();
-
-            if(ADC_result < cur_value){
-                cur_value = ADC_result;
-            }
 			
-			// Write ADC value to RL
-			LCDWriteStringXY(0,0,"RL:");
-			LCDWriteIntXY(4,0,cur_value,3);
+			PWM_8bit = (ADC_result >> 2);
+        
+            OCR0A = PWM_8bit; // Lose the lower 2 bits
+            
+            int duty = (ADC_result * 100) / 1023; // Turns the 10-bit ADC reading into a percentage 0-100
+			
+			// Write ADC value to LCD
+            LCDWriteStringXY(0,0,"ADC:");
+            LCDWriteIntXY(4,0,ADC_result,3);
 
-            // // Write PWM duty cycle to LCD
-            // LCDWriteStringXY(8,0,"PWM:");
-            // LCDWriteIntXY(12,0,duty,3);
-            // LCDWriteStringXY(15,0,"%");
+            // Write PWM duty cycle to LCD
+            LCDWriteStringXY(8,0,"PWM:");
+            LCDWriteIntXY(12,0,duty,3);
+            LCDWriteStringXY(15,0,"%");
             
-            // // Write Direction to LCD
-            // LCDWriteStringXY(0,1,"Dir:");
-            // if (dir){
-            //     LCDWriteStringXY(4,1,"CCW ");
-            // } else {
-            //     LCDWriteStringXY(4,1,"CW  ");
-            // }
+            // Write Direction to LCD
+            LCDWriteStringXY(0,1,"Dir:");
+            if (dir){
+                LCDWriteStringXY(4,1,"CCW ");
+            } else {
+                LCDWriteStringXY(4,1,"CW  ");
+            }
             
-            // // Write Kill Switch status to LCD
-            // LCDWriteStringXY(8,1,"KS:");
-            // if(killswitch){
-            //     LCDWriteStringXY(11,1,"ON ");
-            // } else {
-            //     LCDWriteStringXY(11,1,"OFF");
-            // }
+            // Write Kill Switch status to LCD
+            LCDWriteStringXY(8,1,"KS:");
+            if(killswitch){
+                LCDWriteStringXY(11,1,"ON ");
+            } else {
+                LCDWriteStringXY(11,1,"OFF");
+            }
         }
 	}
 	
