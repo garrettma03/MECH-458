@@ -22,6 +22,7 @@
 #include <avr/io.h>
 #include "lcd.h"
 #include "myutils.h"
+#include <avr/interrupt.h>
 #include "LinkedQueue.h" 	/* This is the attached header file, which cleans things up */
 							/* Make sure you read it!!! */
 
@@ -33,9 +34,11 @@ volatile unsigned int killswitch = 0;
 volatile unsigned int change_dir_req = 0;
 volatile uint8_t high_byte = 0;
 volatile uint8_t low_byte = 0;
-volatile uint8_t PWM_8bit = 0;
+volatile uint8_t calibrationValues[4];
 volatile uint8_t end_gate = 0;
 volatile unsigned int cur_value = 1024;
+volatile uint8_t accSpeed = 20;
+volatile uint8_t count = 0;
 volatile unsigned int optical = 0;
 volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101}; //half step
 volatile int curr_bin = 2; // start on black
@@ -43,12 +46,9 @@ volatile int curr_bin = 2; // start on black
 // Function Definitions
 void mTimer (int count);	/* This is a millisecond timer, using Timer1 */
 void pwmSetup();
-<<<<<<< HEAD
 void calibration(void);
 void findBlack();
 void nTurn(int n, int direction);
-=======
->>>>>>> parent of 4ad2ff9 (Working on Hall effect)
 
 // Node sturcture for storeing cylinder types
 struct Node {
@@ -93,6 +93,8 @@ int main(){
 	EICRA |= (_BV(ISC21) | _BV(ISC20)); // rising edge interrupt
     EIMSK |= (_BV(INT3)); // End gate on PD3 Pin 18
 	EICRA |= (_BV(ISC31) | _BV(ISC30));
+	EIMSK |= (_BV(INT4)); // Hall Effect on PE4 Pin 2
+	EICRA |= (_BV(ISC41) | _BV(ISC40));
 
 	// config ADC =========================================================
 	// by default, the ADC input (analog input is set to be ADC0 / PORTF0
@@ -118,15 +120,10 @@ int main(){
 	
 	OCR0A = 90; // Maps ADC to duty cycle for the PWM
 	PORTB = 0b00001110; // Start clockwise
-<<<<<<< HEAD
 
 	calibration();
 	// Display results
 	mTimer(5000);
-=======
-	
-	while (1){
->>>>>>> parent of 4ad2ff9 (Working on Hall effect)
 
     /* Used for debugging purposes only LEDs on PORTC */
 	DDRC = 0xFF;
@@ -212,8 +209,8 @@ int main(){
 
             if(ADC_result < cur_value){
                 cur_value = ADC_result;
-            }
-			
+			}
+
 			// Write ADC value to RL
 			LCDWriteStringXY(0,0,"RL:");
 			LCDWriteIntXY(4,0,cur_value,3);
@@ -223,44 +220,6 @@ int main(){
     return 0;
 }
 
-ISR(INT0_vect){ // Kill Switch
-	killswitch = 1;
-}
-
-ISR(INT1_vect){
-	// Disable INT1 to avoid bounces triggering repeatedly
-	EIMSK &= ~_BV(INT1);
-	change_dir_req = 1;
-}
-
-// Optical reflector interrupt
-ISR(INT2_vect) { // Trigger ADC conversion when object in optical sensor
-	EIMSK &= ~_BV(INT2); // Disable INT2 to avoid retriggering
-	optical = 1;
-}
-
-ISR(INT3_vect){ // ISR for end gate active low
-	PORTB = 0x0F; // Brake
-	end_gate = 1;
-}
-
-<<<<<<< Updated upstream
-=======
-ISR(INT4_vect){ // ISR for end gate active low
-	PORTB = 0x0F; // Brake
-	end_gate = 1;
-}
-
->>>>>>> Stashed changes
-// the interrupt will be trigured if the ADC is done ========================
-ISR(ADC_vect) {
-	low_byte = ADCL;
-	high_byte = ADCH;
-	ADC_result = high_byte << 2 | (low_byte >> 6); // combine ADCH and ADCL for full 10-bit value
-	ADC_result_flag = 1;
-}
-
-<<<<<<< HEAD
 // nTurn function
 void nTurn(int n, int direction){   // n is steps
     if(direction == 1){             //Turn clockwise
@@ -419,8 +378,6 @@ int diff = next_bin - curr_bin;
 
 }
 
-=======
->>>>>>> parent of 4ad2ff9 (Working on Hall effect)
 // mTimer function
 void mTimer (int count)
 {
@@ -463,3 +420,47 @@ void mTimer (int count)
    return;
 }  /* mTimer */
 
+ISR(INT0_vect){ // Kill Switch
+	killswitch = 1;
+}
+
+ISR(INT1_vect){ 
+	// Disable INT1 to avoid bounces triggering repeatedly
+    EIMSK &= ~_BV(INT1);
+    change_dir_req = 1;
+}
+
+// Optical reflector interrupt
+ISR(INT2_vect) { // Trigger ADC conversion when object in optical sensor
+	EIMSK &= ~_BV(INT2); // Disable INT2 to avoid retriggering
+	optical = 1;
+}
+
+ISR(INT3_vect){ // ISR for end gate active low
+	PORTB = 0x0F; // Brake
+	end_gate = 1;
+}
+
+ISR(INT4_vect){ // ISR for end gate active low
+	PORTB = 0x0F; // Brake
+	end_gate = 1;
+}
+
+// the interrupt will be trigured if the ADC is done ========================
+ISR(ADC_vect) {
+	low_byte = ADCL;
+    high_byte = ADCH;
+	ADC_result = high_byte << 2 | (low_byte >> 6); // combine ADCH and ADCL for full 10-bit value
+	ADC_result_flag = 1;
+}
+
+void pwmSetup(){
+
+	TCCR0A |= 0b00000011; // Set TCCR0A to Fast PWM mode and clear upon reaching compare match STEP 1
+		
+	TCCR0A |= 0b10000000; // Clear OC0A on Compare Match, set OC0A at BOTTOM (non-inverting mode) STEP 3
+		
+	TCCR0B |= 0x02; // Set to no prescaling to 64 STEP 4
+		
+	OCR0A = 128; // Step 5
+}
