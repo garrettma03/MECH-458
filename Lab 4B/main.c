@@ -42,14 +42,14 @@ int main(){
 	CLKPR = 0x80; //Enable bit 7 (clock prescale enable/disable
 	CLKPR = 0x01; //Set division factor to be 2
     while(1){
-        nTurn(90, 1); //Turn 90 degrees clockwise
+        nTurn(50, 1); //Turn 90 degrees clockwise
         mTimer(2000);
-        nTurn(180, 1); //Turn 180 degrees clockwise
+        nTurn(100, 1); //Turn 180 degrees clockwise
         mTimer(2000);
 
-        nTurn(90, -1); //Turn 60 degrees counter clockwise
+        nTurn(50, -1); //Turn 60 degrees counter clockwise
         mTimer(2000);
-        nTurn(180, -1); //Turn 180 degrees counter clockwise
+        nTurn(100, -1); //Turn 180 degrees counter clockwise
         mTimer(2000);
     }
 
@@ -57,139 +57,69 @@ int main(){
 }
 
 // nTurn function
-void nTurn(int n, int direction){
-    int steps;
-    if(direction == 1){ //Turn clockwise
-        switch(n){
-            case 90:
-                steps = 50;
-                for(int i = 0; i < steps; i++){
-                    PORTA = stepperMotor[count];
-                    mTimer(20);
-                    count++;
-                    if(count > 3){
-                        count = 0;
-                    }
+void nTurn(int n, int direction){   // n is steps
+    if(direction == 1){             //Turn clockwise
+        accSpeed = 20;
+        for(int i = 0; i < n; i++){
+            if(i < 10 ){
+                PORTA = stepperMotor[count]; //try i%4 instead of count
+                mTimer(accSpeed);
+                count++;
+                if(count > 3){
+                    count = 0;
                 }
-                break;
-                
-            case 180:
-                accSpeed = 20;
-                steps = 100;
-                for(int i = 0; i < steps; i++){
-                    if(i<15){
-                        PORTA = stepperMotor[count];
-                        mTimer(accSpeed);
-                        count++;
-                        if(count > 3){
-                            count = 0;
-                        }
-                    }else if(i<50){
-                        if(accSpeed > 10){
-                            PORTA = stepperMotor[count];
-                            mTimer(accSpeed);
-                            accSpeed = accSpeed - 1;
-                            count++;
-                            if(count > 3){
-                                count = 0;
-                            }
-                        }else{
-                            PORTA = stepperMotor[count];
-                            mTimer(accSpeed);
-                            count++;
-                            if(count > 3){
-                                count = 0;
-                            }
-                        } 
-                    }else{
-                        if(accSpeed < 21){
-                            PORTA = stepperMotor[count];
-                            mTimer(accSpeed);
-                            accSpeed = accSpeed + 1;
-                            count++;
-                            if(count > 3){
-                                count = 0;
-                            }
-                        }else{
-                            PORTA = stepperMotor[count];
-                            mTimer(accSpeed);
-                            count++;
-                            if(count > 3){
-                                count = 0;
-                            }
-                        } 
-                    }
+            }else if(i < n-19){                  // increase for more acc and held acc
+                if(accSpeed > 1){               //accelerate
+                    accSpeed -= 1;
                 }
-            break;
-
+                PORTA = stepperMotor[count];    //holds if acc == 1
+                mTimer(accSpeed);
+                count++;
+                if(count > 3){
+                    count = 0;
+                }
+            }else{
+                PORTA = stepperMotor[count];
+                mTimer(accSpeed);
+                accSpeed = accSpeed + 1;
+                count++;
+                if(count > 3){
+                    count = 0;
+                }
+            }
         }
-
     }
 
     if(direction == -1){ //Turn Couter clockwise
-        switch(n){
-            case 90:
-                steps = 50;
-                for(int i = 0; i < steps; i++){
-                    PORTA = stepperMotor[count];
-                    mTimer(20);
-                    count--;
-                    if(count < 0){
-                        count = 3;
-                    }
+    accSpeed = 20;
+        for(int i = 0; i < n; i++){
+            if(i < 10 ){
+                PORTA = stepperMotor[count]; //try i%4 instead of count
+                mTimer(accSpeed);
+                count--;
+                if(count < 0){
+                    count = 3;
                 }
-                break;
-                  
-            case 180:
-                accSpeed = 20;
-                steps = 100;
-                for(int i = 0; i < steps; i++){
-                    if(i<15){
-                        PORTA = stepperMotor[count];
-                        mTimer(accSpeed);
-                        count--;
-                        if(count < 0){
-                            count = 3;
-                        }
-                    }else if(i<50){
-                        if(accSpeed > 10){
-                            PORTA = stepperMotor[count];
-                            mTimer(accSpeed);
-                            accSpeed = accSpeed - 1;
-                            count--;
-                            if(count < 0){
-                                count = 3;
-                            }
-                        }else{
-                            PORTA = stepperMotor[count];
-                            mTimer(accSpeed);
-                            count--;
-                            if(count < 0){
-                                count = 3;
-                            }
-                        } 
-                    }else{
-                        if(accSpeed < 21){
-                            PORTA = stepperMotor[count];
-                            mTimer(accSpeed);
-                            accSpeed = accSpeed + 1;
-                            count--;
-                            if(count < 0){
-                                count = 3;
-                            }
-                        }else{
-                            PORTA = stepperMotor[count];
-                            mTimer(accSpeed);
-                            count--;
-                            if(count < 0){
-                                count = 3;
-                            }
-                        } 
-                    }
+            }else if(i < n-19){                  // increase for more acc and held acc
+                if(accSpeed > 1){               //accelerate
+                    accSpeed -= 1;
                 }
-            break;
+                PORTA = stepperMotor[count];    //holds if acc == 1
+                mTimer(accSpeed);
+                count--;
+                if(count < 0){
+                    count = 3;
+                }
+            }else{
+                PORTA = stepperMotor[count];
+                mTimer(accSpeed);
+                accSpeed = accSpeed + 1;
+                count--;
+                if(count < 0){
+                    count = 3;
+                }
+            }
         }
-
     }
 }
 
