@@ -192,6 +192,67 @@ void nTurn(int n, int direction){
     }
 }
 
+// Calibration function
+void calibration(void){
+    uint8_t samples_per_pass = 50;    // how many ADC reads to take per object
+    uint8_t i, j;
+
+    LCDClear();
+    LCDWriteStringXY(0,0,"Calibrating...");
+    LCDWriteStringXY(0,1,"Waiting for 4 passes");
+
+    for (i = 0; i < 4; i++) {
+
+		// Reset current value for this pass
+		cur_value = 1024;
+
+        // wait for optical event (set by ISR INT2)
+        while (!optical){
+			;
+		}
+        // consume the event
+        optical = 0;
+
+		// Make sure ADC is one-shot (not free-running)
+		ADCSRA &= ~_BV(ADATE);
+
+		// Clear any pending optical interrupt and enable INT2
+		EIFR |= _BV(INTF2);
+		EIMSK |= _BV(INT2);
+
+        // get several ADC samples while object is present and keep the minimum
+        for (j = 0; j < samples_per_pass; j++) {
+            ADCSRA |= _BV(ADSC);               // start single conversion
+            while (!ADC_result_flag) {  
+				;      // wait for ADC ISR to set flag
+            }
+            ADC_result_flag = 0;
+            if (ADC_result < cur_value){
+				cur_value = ADC_result;
+			}
+            mTimer(2); // short spacing between reads (adjust as needed)
+        }
+		
+        calibrationValues[i] = cur_value; // store lowest reading for this pass
+
+        // update LCD with values collected so far
+        LCDClear();
+        LCDWriteStringXY(0,0,"Cal:");
+        LCDWriteIntXY(3,0,calibrationValues[0],4);
+        LCDWriteIntXY(8,0,calibrationValues[1],4);
+        LCDWriteStringXY(0,1,"Cal:");
+        LCDWriteIntXY(3,1,calibrationValues[2],4);
+        LCDWriteIntXY(8,1,calibrationValues[3],4);
+
+        // re-arm interrupt for next pass (ISR(INT2) disables it)
+        EIFR |= _BV(INTF2);
+        EIMSK |= _BV(INT2);
+
+        // optional small delay to avoid false retrigger
+        mTimer(25);
+    }
+}
+
 // mTimer function
 void mTimer (int count)
 {

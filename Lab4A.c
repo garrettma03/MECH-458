@@ -119,6 +119,7 @@ void nTurn(int n, int direction){
                             }
                         } 
                     }
+                    
                 }
             break;
 
