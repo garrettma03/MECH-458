@@ -138,6 +138,7 @@ void nTurn(int n, int direction){
                         count = 3;
                     }
                 }
+                break;
                   
             case 180:
                 accSpeed = 20;
