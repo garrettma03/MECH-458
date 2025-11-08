@@ -28,10 +28,23 @@ volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101}; //half 
 //volatile int stepperMotor[4] = {0b110110, 0b101101, 0b110110, 0b101101};   //full step?
 volatile int count = 0;
 volatile int accSpeed = 20;
+volatile int calibrationValues[4];
+volatile int curr_bin = 2; // start on black
 
 // Function Definitions
 void mTimer (int count);	/* This is a millisecond timer, using Timer1 */
 void nTurn(int n, int direction);
+
+// Node sturcture for storeing cylinder types
+struct Node {
+    int val;
+    struct Node *next;
+};
+
+// Front and rear pointers for the queue
+struct Node *front = NULL;
+struct Node *rear = NULL;
+
 
 int main(){
 
@@ -41,6 +54,25 @@ int main(){
 
 	CLKPR = 0x80; //Enable bit 7 (clock prescale enable/disable
 	CLKPR = 0x01; //Set division factor to be 2
+
+
+    // //start PWM and Belt
+    // startBelt();
+    
+    // calibration();
+
+
+    // while(1){
+
+    //     addVal();
+
+    //     //the function for stopping the belt goes here:
+    //     stopBelt();
+
+    //     rotateDish(dequeue());
+    // }
+
+
     while(1){
         nTurn(50, 1); //Turn 90 degrees clockwise
         mTimer(2000);
@@ -182,6 +214,171 @@ void calibration(void){
         // optional small delay to avoid false retrigger
         mTimer(25);
     }
+}
+
+void addVal(void){                       //fix
+    uint8_t samples_per_pass = 50;    // how many ADC reads to take per object //garrett debounce?
+    uint8_t i, j;
+
+    for (i = 0; i < 4; i++) {
+		// Reset current value for this pass
+		cur_value = 1024;
+        // wait for optical event (set by ISR INT2)
+        while (!optical){
+			;
+		}
+        // consume the event
+        optical = 0;
+		// Make sure ADC is one-shot (not free-running)
+		ADCSRA &= ~_BV(ADATE);
+		// Clear any pending optical interrupt and enable INT2
+		EIFR |= _BV(INTF2);
+		EIMSK |= _BV(INT2);
+        // get several ADC samples while object is present and keep the minimum
+        for (j = 0; j < samples_per_pass; j++) {
+            ADCSRA |= _BV(ADSC);               // start single conversion
+            while (!ADC_result_flag) {  
+				;      // wait for ADC ISR to set flag
+            }
+            ADC_result_flag = 0;
+            if (ADC_result < cur_value){
+				cur_value = ADC_result;
+			}
+            mTimer(2); // short spacing between reads (adjust as needed)
+        }
+
+        enqueue(cur_value); //is this right??????????????????????????????????????
+
+        // re-arm interrupt for next pass (ISR(INT2) disables it)
+        EIFR |= _BV(INTF2);
+        EIMSK |= _BV(INT2);
+
+        // optional small delay to avoid false retrigger
+        mTimer(25);
+    }
+}
+
+void enqueue(int value){ // todo fix edge case where calibrationValues[1] does not fall in bounds
+    //todo
+        if(value > calibrationValues[1]*0.9 && value < calibrationValues[1]*1.1){ // aluminium? 
+
+            struct Node *newNode = (struct Node *)malloc(sizeof(struct Node));
+                if (newNode == NULL) {
+                    printf("Memory allocation failed\n");
+                    return;
+                }
+                newNode->val = 1; // aluminium
+                newNode->next = NULL;
+
+                if (rear == NULL) {
+                    // Queue is empty
+                    front = rear = newNode;
+                } else {
+                    rear->next = newNode;
+                    rear = newNode;
+                }
+        }
+        if(value > calibrationValues[2]*0.9 && value < calibrationValues[2]*1.1){ // black
+
+            struct Node *newNode = (struct Node *)malloc(sizeof(struct Node));
+                if (newNode == NULL) {
+                    printf("Memory allocation failed\n");
+                    return;
+                }
+                newNode->val = 2; // black
+                newNode->next = NULL;
+
+                if (rear == NULL) {
+                    // Queue is empty
+                    front = rear = newNode;
+                } else {
+                    rear->next = newNode;
+                    rear = newNode;
+                }
+        }
+        if(value > calibrationValues[3]*0.9 && value < calibrationValues[3]*1.1){ // steel
+
+            struct Node *newNode = (struct Node *)malloc(sizeof(struct Node));
+                if (newNode == NULL) {
+                    printf("Memory allocation failed\n");
+                    return;
+                }
+                newNode->val = 3; // steel
+                newNode->next = NULL;
+
+                if (rear == NULL) {
+                    // Queue is empty
+                    front = rear = newNode;
+                } else {
+                    rear->next = newNode;
+                    rear = newNode;
+                }
+        }
+        if(value > calibrationValues[0]*0.9 && value < calibrationValues[0]*1.1){ // white 
+
+            struct Node *newNode = (struct Node *)malloc(sizeof(struct Node));
+                if (newNode == NULL) {
+                    printf("Memory allocation failed\n");
+                    return;
+                }
+                newNode->val = 0; // white
+                newNode->next = NULL;
+
+                if (rear == NULL) {
+                    // Queue is empty
+                    front = rear = newNode;
+                } else {
+                    rear->next = newNode;
+                    rear = newNode;
+                }
+        }
+}
+
+int dequeue() {
+    if (front == NULL) { // todo -------------------------------figure out
+        return -1;  // Sentinel value for empty queue
+    }
+
+    struct Node *temp = front;
+    int value = temp->val;  // Save the value to return
+
+    front = front->next;
+    if (front == NULL) {
+        rear = NULL;  // Queue became empty
+    }
+
+    free(temp);
+    return value;
+}
+
+void rotateDish(int next_bin) {
+    printf("Rotating dish to position based on value: %d\n", next_bin);
+
+// Constants
+int WHITE = 0;
+int ALUMINUM = 1;
+int BLACK = 2;
+int STEEL = 3;
+int diff = next_bin - curr_bin;
+
+    if (diff == 1 || diff == -3) {          // and include edge case, rotate WHITE to STEEL
+        // rotate 90 CW
+        nTurn(50, 1); //Turn 90 degrees clockwise
+        curr_bin = next_bin;                //check with lewis on this
+    } else if (diff == -1 || diff == 3) {   // and includes edge case, rotate STEEL to WHITE
+        // rotate 90 CCW
+        nTurn(50, -1);
+        curr_bin = next_bin;
+    } else if (abs(diff) == 2) {
+        // rotate 180
+        nTurn(100, 1);
+        curr_bin = next_bin;
+    } else{
+        // diff is 0, do nothing
+        //yata
+        curr_bin = next_bin;
+    }
+
 }
 
 // mTimer function
