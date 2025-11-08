@@ -141,12 +141,15 @@
     <Compile Include="lcd.h">
       <SubType>compile</SubType>
     </Compile>
+<<<<<<< HEAD
     <Compile Include="LinkedQueue.c">
       <SubType>compile</SubType>
     </Compile>
     <Compile Include="LinkedQueue.h">
       <SubType>compile</SubType>
     </Compile>
+=======
+>>>>>>> parent of 4ad2ff9 (Working on Hall effect)
     <Compile Include="main.c">
       <SubType>compile</SubType>
     </Compile>

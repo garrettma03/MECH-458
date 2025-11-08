@@ -9,7 +9,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 	ProjectSection(SolutionItems) = preProject
 		Lab 4B\LCD.c = Lab 4B\LCD.c
 		Lab 4B\lcd.h = Lab 4B\lcd.h
-		LinkedQueue.h = LinkedQueue.h
 		Lab 4B\myutils.h = Lab 4B\myutils.h
 	EndProjectSection
 EndProject

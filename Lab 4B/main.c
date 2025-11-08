@@ -33,7 +33,7 @@ volatile unsigned int killswitch = 0;
 volatile unsigned int change_dir_req = 0;
 volatile uint8_t high_byte = 0;
 volatile uint8_t low_byte = 0;
-volatile uint8_t calibrationValues[4];
+volatile uint8_t PWM_8bit = 0;
 volatile uint8_t end_gate = 0;
 volatile unsigned int cur_value = 1024;
 volatile unsigned int optical = 0;
@@ -43,9 +43,12 @@ volatile int curr_bin = 2; // start on black
 // Function Definitions
 void mTimer (int count);	/* This is a millisecond timer, using Timer1 */
 void pwmSetup();
+<<<<<<< HEAD
 void calibration(void);
 void findBlack();
 void nTurn(int n, int direction);
+=======
+>>>>>>> parent of 4ad2ff9 (Working on Hall effect)
 
 // Node sturcture for storeing cylinder types
 struct Node {
@@ -90,8 +93,6 @@ int main(){
 	EICRA |= (_BV(ISC21) | _BV(ISC20)); // rising edge interrupt
     EIMSK |= (_BV(INT3)); // End gate on PD3 Pin 18
 	EICRA |= (_BV(ISC31) | _BV(ISC30));
-	EIMSK |= (_BV(INT4)); // Hall Effect on PE4 Pin 2
-	EICRA |= (_BV(ISC41) | _BV(ISC40));
 
 	// config ADC =========================================================
 	// by default, the ADC input (analog input is set to be ADC0 / PORTF0
@@ -117,10 +118,15 @@ int main(){
 	
 	OCR0A = 90; // Maps ADC to duty cycle for the PWM
 	PORTB = 0b00001110; // Start clockwise
+<<<<<<< HEAD
 
 	calibration();
 	// Display results
 	mTimer(5000);
+=======
+	
+	while (1){
+>>>>>>> parent of 4ad2ff9 (Working on Hall effect)
 
     /* Used for debugging purposes only LEDs on PORTC */
 	DDRC = 0xFF;
@@ -206,8 +212,8 @@ int main(){
 
             if(ADC_result < cur_value){
                 cur_value = ADC_result;
-			}
-
+            }
+			
 			// Write ADC value to RL
 			LCDWriteStringXY(0,0,"RL:");
 			LCDWriteIntXY(4,0,cur_value,3);
@@ -238,11 +244,6 @@ ISR(INT3_vect){ // ISR for end gate active low
 	end_gate = 1;
 }
 
-ISR(INT3_vect){ // ISR for end gate active low
-	PORTB = 0x0F; // Brake
-	end_gate = 1;
-}
-
 // the interrupt will be trigured if the ADC is done ========================
 ISR(ADC_vect) {
 	low_byte = ADCL;
@@ -251,6 +252,7 @@ ISR(ADC_vect) {
 	ADC_result_flag = 1;
 }
 
+<<<<<<< HEAD
 // nTurn function
 void nTurn(int n, int direction){   // n is steps
     if(direction == 1){             //Turn clockwise
@@ -409,6 +411,8 @@ int diff = next_bin - curr_bin;
 
 }
 
+=======
+>>>>>>> parent of 4ad2ff9 (Working on Hall effect)
 // mTimer function
 void mTimer (int count)
 {
