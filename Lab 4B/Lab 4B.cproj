@@ -141,6 +141,9 @@
     <Compile Include="lcd.h">
       <SubType>compile</SubType>
     </Compile>
+    <Compile Include="LinkedQueue.c">
+      <SubType>compile</SubType>
+    </Compile>
     <Compile Include="LinkedQueue.h">
       <SubType>compile</SubType>
     </Compile>
