@@ -214,9 +214,9 @@ void nTurn(int n, int direction){   // n is steps
                 mTimer(accSpeed);
                 
             }else if(i < n-19){                  // increase for more acc and held acc
-                if(accSpeed > 1){               //accelerate
-                   accSpeed -= 0.2;
-                }
+                // if(accSpeed > 1){               //accelerate
+                //    accSpeed -= 0.2;
+                // }
                 count++;
                 if(count > 3){
                     count = 0;
@@ -231,7 +231,7 @@ void nTurn(int n, int direction){   // n is steps
                 }
                 PORTA = stepperMotor[count];
                 mTimer(accSpeed);
-                accSpeed = accSpeed + 0.2;
+                //accSpeed = accSpeed + 0.2;
                 
             }
         }
@@ -248,9 +248,9 @@ void nTurn(int n, int direction){   // n is steps
                 PORTA = stepperMotor[count]; //try i%4 instead of count
                 mTimer(accSpeed);
             }else if(i < n-19){                  // increase for more acc and held acc
-                if(accSpeed > 1){               //accelerate
-                    accSpeed -= 0.2;
-                }
+                // if(accSpeed > 1){               //accelerate
+                //     accSpeed -= 0.2;
+                // }
                 count--;
                 if(count < 0){
                     count = 3;
@@ -264,7 +264,7 @@ void nTurn(int n, int direction){   // n is steps
                 }
                 PORTA = stepperMotor[count];
                 mTimer(accSpeed);
-                accSpeed = accSpeed + 0.2;
+                //accSpeed = accSpeed + 0.2;
             }
         }
     }
