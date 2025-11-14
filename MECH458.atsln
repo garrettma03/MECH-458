@@ -7,9 +7,8 @@ Project("{54F91283-7BC4-4236-8FF9-10F437C3AD48}") = "MECH458", "MECH458\MECH458.
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{67443A16-F581-46C7-98F4-DBB633DC1F42}"
 	ProjectSection(SolutionItems) = preProject
-		..\MECH-458\Lab 4B\lcd.h = ..\MECH-458\Lab 4B\lcd.h
-		..\MECH-458\Lab 4B\LinkedQueue.h = ..\MECH-458\Lab 4B\LinkedQueue.h
-		..\MECH-458\Lab 4B\myutils.h = ..\MECH-458\Lab 4B\myutils.h
+		Lab 4B\lcd.h = Lab 4B\lcd.h
+		Lab 4B\myutils.h = Lab 4B\myutils.h
 	EndProjectSection
 EndProject
 Global

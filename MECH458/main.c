@@ -43,6 +43,14 @@ volatile unsigned int optical = 0;
 volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101}; //half step
 volatile int curr_bin = 2; // start on black
 
+// Pointer
+link *head; /* The ptr to the head of the queue */
+link *tail; /* The ptr to the tail of the queue */
+link *newLink; /* A ptr to a link aggregate data type (struct) */
+link *rtnLink; /* same as the above */
+element eTest; /* A variable to hold the aggregate data type known as
+element */
+
 // Function Definitions
 void mTimer (int count);	/* This is a millisecond timer, using Timer1 */
 void pwmSetup();
@@ -51,28 +59,25 @@ void findBlack();
 void nTurn(int n, int direction);
 void classify();
 
-// Node sturcture for storeing cylinder types
-struct Node {
-    int val;
-    struct Node *next;
-};
-
-// Front and rear pointers for the queue
-struct Node *front = NULL;
-struct Node *rear = NULL;
-
 
 int main(){
 
     cli(); // disable all of the interrupt ==========================
 
-	CLKPR = 0x80; //Enable bit 7 (clock prescale enable/disable
-	CLKPR = 0x01; //Set division factor to be 2
+    CLKPR = 0x80;
+    CLKPR = 0x01;
 
-	/* Used for debugging purposes only LEDs on PORTC */
-	DDRC = 0xFF; //Set PORTC to output
-	DDRA = 0x00; //Set PORTA to input
-    DDRB = 0xFF; // Step 6
+    // Initialize queue once (uses the global head/tail)
+    setup(&head, &tail);
+
+    // Optionally reset rtnLink/newLink if you want
+    rtnLink = NULL;
+    newLink = NULL;
+
+    /* Used for debugging purposes only LEDs on PORTC */
+    DDRC = 0xFF;
+    DDRA = 0x00;
+    DDRB = 0xFF;
 
 	//Start PWM in the background
 	pwmSetup();
@@ -479,17 +484,17 @@ void classify() {
 
         // Wait for ADC ISR to set the flag
         while (!ADC_result_flag) {
-            ; // busy-wait (lab style)
+            ; // busy-wait
         }
 
         // Copy and clear flag atomically
         cli();
-        uint16_t s = ADC_result;
+        uint16_t sample = ADC_result;
         ADC_result_flag = 0;
         sei();
 
-        if (s < sample_min) {
-            sample_min = s;
+        if (sample < sample_min) {
+            sample_min = sample;
         }
 
         mTimer(2);  // small delay between samples
@@ -501,7 +506,13 @@ void classify() {
 
     for (uint8_t i = 0; i < 4; i++) {
         uint16_t calib = calibrationValues[i];
-        uint16_t diff = (sample_min > calib) ? (sample_min - calib) : (calib - sample_min);
+        uint16_t diff;
+
+        if (sample_min > calib) {
+            diff = sample_min - calib;
+        } else {
+            diff = calib - sample_min;
+        }
 
         if (diff < best_diff) {
             best_diff = diff;
@@ -509,25 +520,19 @@ void classify() {
         }
     }
 
-    // --- Optional ±10% sanity check ---
-    int classification = -1;  // -1 = unknown
-    uint16_t best_calib = calibrationValues[best_class];
-
-    // Check: 10 * |value - calib| <= calib  (i.e. <= 10% error)
-    if (best_calib != 0 && (best_diff * 10u) <= best_calib) {
-        classification = best_class;
-    } else {
-        classification = -1; // UNKNOWN / reject
-    }
-
     // Re-arm optical interrupt for next object
     EIFR |= _BV(INTF2);     // clear any pending flag
     EIMSK |= _BV(INT2);     // enable INT2 again
 
-    // Enqueue classification if valid
-    if (classification >= 0) {
-        enqueue(classification);
-    }
+    // --- Enqueue classification result using LinkedQueue ---
+    initLink(&newLink);                 // allocate and initialize a new link
+
+    // Store the classification in the element payload.
+    // Assuming element has a field like 'itemCode' (from your previous lab code):
+    newLink->e.itemCode = (uint8_t)best_class;
+
+    // Put it in the queue
+    enqueue(&head, &tail, &newLink);
 
     // Debug output
     LCDClear();
@@ -535,6 +540,6 @@ void classify() {
     LCDWriteIntXY(4,0,sample_min,4);
 
     LCDWriteStringXY(0,1,"Class:");
-    LCDWriteIntXY(6,1,classification,2);
+    LCDWriteIntXY(6,1,best_class,2);
     mTimer(500);  // shorter delay for responsiveness
 }
