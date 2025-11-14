@@ -59,6 +59,20 @@ void findBlack();
 void nTurn(int n, int direction);
 void classify();
 
+typedef enum {
+    WHITE = 0,
+    ALUMINUM = 1,
+    BLACK = 2,
+    STEEL = 3,
+    MATERIAL_COUNT
+} Material;
+
+const char *materialNames[MATERIAL_COUNT] = {
+    "WHITE",
+    "ALUM",
+    "BLACK",
+    "STEEL"
+};
 
 int main(){
 
@@ -351,18 +365,13 @@ void calibration(void){
         EIMSK |= _BV(INT2);
 
         // optional small delay to avoid false retrigger
-        mTimer(25);
+        mTimer(100);
     }
 }
 
 void rotateDish(int next_bin) {
     printf("Rotating dish to position based on value: %d\n", next_bin);
 
-// Constants
-int WHITE = 0;
-int ALUMINUM = 1;
-int BLACK = 2;
-int STEEL = 3;
 int diff = next_bin - curr_bin;
 
     if (diff == 1 || diff == -3) {          // and include edge case, rotate WHITE to STEEL
@@ -484,7 +493,7 @@ void classify() {
 
         // Wait for ADC ISR to set the flag
         while (!ADC_result_flag) {
-            ; // busy-wait
+            ; // Wait for flag to be risen
         }
 
         // Copy and clear flag atomically
@@ -502,18 +511,20 @@ void classify() {
 
     // --- Nearest calibration value ---
     uint8_t best_class = 0;
-    uint16_t best_diff = 0xFFFF;
+    uint16_t best_diff = 1024;
 
     for (uint8_t i = 0; i < 4; i++) {
         uint16_t calib = calibrationValues[i];
         uint16_t diff;
 
+        // Calculate absolute difference
         if (sample_min > calib) {
             diff = sample_min - calib;
         } else {
             diff = calib - sample_min;
         }
 
+        // If this is the smallest difference so far, store it
         if (diff < best_diff) {
             best_diff = diff;
             best_class = i;
@@ -540,6 +551,6 @@ void classify() {
     LCDWriteIntXY(4,0,sample_min,4);
 
     LCDWriteStringXY(0,1,"Class:");
-    LCDWriteIntXY(6,1,best_class,2);
-    mTimer(500);  // shorter delay for responsiveness
+    LCDWriteStringXY(6,1, materialNames[best_class]);
+    mTimer(500);
 }
