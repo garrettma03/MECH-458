@@ -37,11 +37,11 @@ volatile uint8_t low_byte = 0;
 volatile uint16_t calibrationValues[4] = {0,0,0,0};
 volatile uint8_t end_gate = 0;
 volatile unsigned int cur_value = 1024;
-volatile uint8_t accSpeed = 20;
+volatile int accSpeed = 20;
 volatile int count = 0;
 volatile unsigned int optical = 0;
 volatile uint8_t calibration_busy = 0;    // new: suppress main LCD updates during calibration
-volatile int stepperMotor[4] = {0b110000, 0b111000, 0b000110, 0b000111}; //half step or maybe full idk
+volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101}; //half step
 volatile int curr_bin = 2; // start on black
 
 // Pointer
@@ -98,7 +98,7 @@ int main(){
 	LCDClear();
 	LCDWriteStringXY(0,0,"DC Motor Ready");
 	LCDWriteStringXY(0,1,"Hi");
-	mTimer(1000);
+	mTimer(2000);
 	LCDClear();
 
     // Initialize queue once (uses the global head/tail)
@@ -215,7 +215,7 @@ void nTurn(int n, int direction){   // n is steps
                 
             }else if(i < n-19){                  // increase for more acc and held acc
                 if(accSpeed > 1){               //accelerate
-                   // accSpeed -= 1;
+                   accSpeed -= 0.2;
                 }
                 count++;
                 if(count > 3){
@@ -231,7 +231,7 @@ void nTurn(int n, int direction){   // n is steps
                 }
                 PORTA = stepperMotor[count];
                 mTimer(accSpeed);
-                //accSpeed = accSpeed + 1;
+                accSpeed = accSpeed + 0.2;
                 
             }
         }
@@ -248,9 +248,9 @@ void nTurn(int n, int direction){   // n is steps
                 PORTA = stepperMotor[count]; //try i%4 instead of count
                 mTimer(accSpeed);
             }else if(i < n-19){                  // increase for more acc and held acc
-                // if(accSpeed > 1){               //accelerate
-                //     //accSpeed -= 1;
-                // }
+                if(accSpeed > 1){               //accelerate
+                    accSpeed -= 0.2;
+                }
                 count--;
                 if(count < 0){
                     count = 3;
@@ -264,7 +264,7 @@ void nTurn(int n, int direction){   // n is steps
                 }
                 PORTA = stepperMotor[count];
                 mTimer(accSpeed);
-                //accSpeed = accSpeed + 1;
+                accSpeed = accSpeed + 0.2;
             }
         }
     }
