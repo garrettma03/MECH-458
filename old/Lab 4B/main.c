@@ -70,7 +70,7 @@ int main(){
 
 	/* Used for debugging purposes only LEDs on PORTC */
 	DDRC = 0xFF; //Set PORTC to output
-	DDRA = 0x00; //Set PORTA to input
+	DDRA = 0xFF; //Set PORTA to input
     DDRB = 0xFF; // Step 6
 
 	//Start PWM in the background

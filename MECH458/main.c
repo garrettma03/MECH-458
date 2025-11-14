@@ -34,12 +34,13 @@ volatile unsigned int killswitch = 0;
 volatile unsigned int change_dir_req = 0;
 volatile uint8_t high_byte = 0;
 volatile uint8_t low_byte = 0;
-volatile uint16_t calibrationValues[4];
+volatile uint16_t calibrationValues[4] = {0,0,0,0};
 volatile uint8_t end_gate = 0;
 volatile unsigned int cur_value = 1024;
 volatile uint8_t accSpeed = 20;
 volatile uint8_t count = 0;
 volatile unsigned int optical = 0;
+volatile uint8_t calibration_busy = 0;    // new: suppress main LCD updates during calibration
 volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101}; //half step
 volatile int curr_bin = 2; // start on black
 
@@ -76,25 +77,21 @@ const char *materialNames[MATERIAL_COUNT] = {
 
 int main(){
 
-    cli(); // disable all of the interrupt ==========================
+	cli(); // disable all of the interrupt ==========================
 
-    CLKPR = 0x80;
-    CLKPR = 0x01;
+	CLKPR = 0x80; //Enable bit 7 (clock prescale enable/disable
+	CLKPR = 0x01; //Set division factor to be 2
 
-    // Initialize queue once (uses the global head/tail)
-    setup(&head, &tail);
-
-    // Optionally reset rtnLink/newLink if you want
-    rtnLink = NULL;
-    newLink = NULL;
-
-    /* Used for debugging purposes only LEDs on PORTC */
-    DDRC = 0xFF;
-    DDRA = 0x00;
-    DDRB = 0xFF;
+	/* Used for debugging purposes only LEDs on PORTC */
+	DDRC = 0xFF; //Set PORTC to output
+	DDRA = 0xFF; //Set PORTA to output
+	DDRB = 0xFF; // Step 6
 
 	//Start PWM in the background
 	pwmSetup();
+
+    OCR0A = 90; // Maps ADC to duty cycle for the PWM
+	PORTB = 0b00001110; // Start clockwise
 
 	// Init LCD
 	InitLCD(LS_BLINK);
@@ -104,6 +101,13 @@ int main(){
 	mTimer(2000);
 	LCDClear();
 
+    // Initialize queue once (uses the global head/tail)
+    setup(&head, &tail);
+
+    // Optionally reset rtnLink/newLink if you want
+    rtnLink = NULL;
+    newLink = NULL;
+
 	// config the external interrupt ======================================
 	EIMSK |= (_BV(INT0)); // Kill switch on PD0
 	EICRA |= (_BV(ISC01) | _BV(ISC00));
@@ -111,10 +115,10 @@ int main(){
 	EICRA |= (_BV(ISC11) | _BV(ISC10));
 	EIMSK |= (_BV(INT2)); // Optical Reflector on PD2 Pin 19
 	EICRA |= (_BV(ISC21) | _BV(ISC20)); // rising edge interrupt
-    EIMSK |= (_BV(INT3)); // End gate on PD3 Pin 18
-	EICRA |= (_BV(ISC31) | _BV(ISC30));
-	EIMSK |= (_BV(INT4)); // Hall Effect on PE4 Pin 2
-	EICRA |= (_BV(ISC41) | _BV(ISC40));
+    //EIMSK |= (_BV(INT3)); // End gate on PD3 Pin 18
+	//EICRA |= (_BV(ISC31) | _BV(ISC30));
+	//EIMSK |= (_BV(INT4)); // Hall Effect on PE4 Pin 2
+	//EICRA |= (_BV(ISC41) | _BV(ISC40));
 
 	// config ADC =========================================================
 	// by default, the ADC input (analog input is set to be ADC0 / PORTF0
@@ -137,21 +141,7 @@ int main(){
 	//Motor implementation
 	dir = 1;
 	killswitch = 0;
-	
-	OCR0A = 90; // Maps ADC to duty cycle for the PWM
-	PORTB = 0b00001110; // Start clockwise
 
-	calibration();
-	// Display results
-	mTimer(5000);
-
-    /* Used for debugging purposes only LEDs on PORTC */
-	DDRC = 0xFF;
-	DDRA = 0xFF;		//Set PORTA to output
-
-	CLKPR = 0x80; //Enable bit 7 (clock prescale enable/disable
-	CLKPR = 0x01; //Set division factor to be 2
-    
     //Spin Motor
     nTurn(50, 1); //Turn 90 degrees clockwise
     mTimer(2000);
@@ -163,28 +153,14 @@ int main(){
     nTurn(100, -1); //Turn 180 degrees counter clockwise
     mTimer(2000);
 
-
-    // //start PWM and Belt
-    // startBelt();
+	calibration();
+	// Display results
+	mTimer(5000);
     
-    // calibration();
-
-
-    // while(1){
-
-    //     addVal();
-
-    //     //the function for stopping the belt goes here:
-    //     stopBelt();
-
-    //     rotateDish(dequeue());
-    // }
-
-
     while(1){
 
         if(killswitch){
-			PORTB = 0x0F; // Brake
+			//PORTB = 0x0F; // Brake
 			cli(); // Clear all interrupts
 			LCDClear();
 			LCDWriteStringXY(0,0,"KILLSWITCH ON");
@@ -204,7 +180,7 @@ int main(){
         if (change_dir_req) {
             mTimer(20); // debounce delay
             if (PIND & _BV(PD1)) { // still pressed
-                PORTB = 0x0F; // Brake
+                //PORTB = 0x0F; // Brake
                 if (dir) {
                     dir = 0;
                     PORTB = 0x0D;
@@ -287,7 +263,7 @@ void nTurn(int n, int direction){   // n is steps
                 }
             }else if(i < n-19){                  // increase for more acc and held acc
                 if(accSpeed > 1){               //accelerate
-                    accSpeed -= 1;
+                    //accSpeed -= 1;
                 }
                 PORTA = stepperMotor[count];    //holds if acc == 1
                 mTimer(accSpeed);
@@ -298,7 +274,7 @@ void nTurn(int n, int direction){   // n is steps
             }else{
                 PORTA = stepperMotor[count];
                 mTimer(accSpeed);
-                accSpeed = accSpeed + 1;
+                //accSpeed = accSpeed + 1;
                 count--;
                 if(count < 0){
                     count = 3;
@@ -308,9 +284,8 @@ void nTurn(int n, int direction){   // n is steps
     }
 }
 
-// Calibration function
 void calibration(void){
-    uint8_t samples_per_pass = 50;    // how many ADC reads to take per object
+    uint8_t samples_per_pass = 50;
     uint8_t i, j;
 
     LCDClear();
@@ -318,56 +293,58 @@ void calibration(void){
     LCDWriteStringXY(0,1,"Waiting for 4 passes");
 
     for (i = 0; i < 4; i++) {
+        cur_value = 1024;
+        ADCSRA &= ~_BV(ADATE);   // one-shot ADC
 
-		// Reset current value for this pass
-		cur_value = 1024;
+        // --- prepare for a NEW optical event ---
+        optical = 0;             // clear software flag
 
-        // wait for optical event (set by ISR INT2)
-        while (!optical){
-			;
-		}
-        // consume the event
-        optical = 0;
+        EIFR |= _BV(INTF2);      // clear any stale INT2 flag
+        EIMSK |= _BV(INT2);      // enable INT2
 
-		// Make sure ADC is one-shot (not free-running)
-		ADCSRA &= ~_BV(ADATE);
+        // wait until the optical ISR sets 'optical = 1'
+        while (!optical) {
+            ; // busy-wait; could add timeout if desired
+        }
 
-		// Clear any pending optical interrupt and enable INT2
-		EIFR |= _BV(INTF2);
-		EIMSK |= _BV(INT2);
+        // now object is in front of sensor; we can disable INT2
+        EIMSK &= ~_BV(INT2);
 
-        // get several ADC samples while object is present and keep the minimum
+        // --- take ADC samples and find min ---
         for (j = 0; j < samples_per_pass; j++) {
-            ADCSRA |= _BV(ADSC);               // start single conversion
-            while (!ADC_result_flag) {  
-				;      // wait for ADC ISR to set flag
+            ADCSRA |= _BV(ADSC);        // start conversion
+            while (!ADC_result_flag) {
+                ; // wait for ADC ISR
+            }
+
+            if (ADC_result < cur_value){
+                cur_value = ADC_result;
             }
             ADC_result_flag = 0;
-            if (ADC_result < cur_value){
-				cur_value = ADC_result;
-			}
-            mTimer(2); // short spacing between reads (adjust as needed)
+            mTimer(2);
         }
-		
-        calibrationValues[i] = cur_value; // store lowest reading for this pass
 
-        // update LCD with values collected so far
+        calibrationValues[i] = cur_value;
+
+        // show only this pass's min
         LCDClear();
-        LCDWriteStringXY(0,0,"Cal:");
-        LCDWriteIntXY(3,0,calibrationValues[0],4);
-        LCDWriteIntXY(8,0,calibrationValues[1],4);
-        LCDWriteStringXY(0,1,"Cal:");
-        LCDWriteIntXY(3,1,calibrationValues[2],4);
-        LCDWriteIntXY(8,1,calibrationValues[3],4);
-
-        // re-arm interrupt for next pass (ISR(INT2) disables it)
-        EIFR |= _BV(INTF2);
-        EIMSK |= _BV(INT2);
-
-        // optional small delay to avoid false retrigger
-        mTimer(100);
+        LCDWriteStringXY(0,0,"Pass:");
+        LCDWriteIntXY(5,0, i+1, 1);
+        LCDWriteStringXY(0,1,"Min:");
+        LCDWriteIntXY(4,1, cur_value, 4);
+        mTimer(500);
     }
+
+    // summary display
+    LCDClear();
+    LCDWriteStringXY(0,0,"Cal:");
+    LCDWriteIntXY(3,0,calibrationValues[0],4);
+    LCDWriteIntXY(8,0,calibrationValues[1],4);
+    LCDWriteStringXY(0,1,"Cal:");
+    LCDWriteIntXY(3,1,calibrationValues[2],4);
+    LCDWriteIntXY(8,1,calibrationValues[3],4);
 }
+
 
 void rotateDish(int next_bin) {
     printf("Rotating dish to position based on value: %d\n", next_bin);
@@ -448,19 +425,20 @@ ISR(INT1_vect){
 
 // Optical reflector interrupt
 ISR(INT2_vect) { // Trigger ADC conversion when object in optical sensor
-	EIMSK &= ~_BV(INT2); // Disable INT2 to avoid retriggering
-	optical = 1;
+    EIMSK &= ~_BV(INT2);   // disable INT2 to avoid retrigger/bounce
+    EIFR  |= _BV(INTF2);   // clear any pending flag
+    optical = 1;    
 }
 
-ISR(INT3_vect){ // ISR for end gate active low
+/*ISR(INT3_vect){ // ISR for end gate active low
 	PORTB = 0x0F; // Brake
 	end_gate = 1;
-}
+}*/
 
-ISR(INT4_vect){ // ISR for end gate active low
-	PORTB = 0x0F; // Brake
-	end_gate = 1;
-}
+/*ISR(INT4_vect){ // ISR for Hall Effect on PE4 Pin 2
+	//PORTB = 0x0F; // Brake
+	//Constantly Triggering
+}*/
 
 // the interrupt will be trigured if the ADC is done ========================
 ISR(ADC_vect) {
