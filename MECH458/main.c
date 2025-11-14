@@ -34,7 +34,7 @@ volatile unsigned int killswitch = 0;
 volatile unsigned int change_dir_req = 0;
 volatile uint8_t high_byte = 0;
 volatile uint8_t low_byte = 0;
-volatile uint8_t calibrationValues[4];
+volatile uint16_t calibrationValues[4];
 volatile uint8_t end_gate = 0;
 volatile unsigned int cur_value = 1024;
 volatile uint8_t accSpeed = 20;
@@ -49,6 +49,7 @@ void pwmSetup();
 void calibration(void);
 void findBlack();
 void nTurn(int n, int direction);
+void classify();
 
 // Node sturcture for storeing cylinder types
 struct Node {
@@ -131,6 +132,17 @@ int main(){
 
 	CLKPR = 0x80; //Enable bit 7 (clock prescale enable/disable
 	CLKPR = 0x01; //Set division factor to be 2
+    
+    //Spin Motor
+    nTurn(50, 1); //Turn 90 degrees clockwise
+    mTimer(2000);
+    nTurn(100, 1); //Turn 180 degrees clockwise
+    mTimer(2000);
+
+    nTurn(50, -1); //Turn 60 degrees counter clockwise
+    mTimer(2000);
+    nTurn(100, -1); //Turn 180 degrees counter clockwise
+    mTimer(2000);
 
 
     // //start PWM and Belt
@@ -151,17 +163,8 @@ int main(){
 
 
     while(1){
-        nTurn(50, 1); //Turn 90 degrees clockwise
-        mTimer(2000);
-        nTurn(100, 1); //Turn 180 degrees clockwise
-        mTimer(2000);
 
-        nTurn(50, -1); //Turn 60 degrees counter clockwise
-        mTimer(2000);
-        nTurn(100, -1); //Turn 180 degrees counter clockwise
-        mTimer(2000);
-
-        		if(killswitch){
+        if(killswitch){
 			PORTB = 0x0F; // Brake
 			cli(); // Clear all interrupts
 			LCDClear();
@@ -176,8 +179,7 @@ int main(){
 
 		if(optical){
 			optical = 0;
-			ADCSRA |= _BV(ADSC); // Start ADC conversion
-			EIMSK |= _BV(INT2); // re-enable INT2	
+			classify();
 		}
 
         if (change_dir_req) {
@@ -463,4 +465,76 @@ void pwmSetup(){
 	TCCR0B |= 0x02; // Set to no prescaling to 64 STEP 4
 		
 	OCR0A = 128; // Step 5
+}
+
+void classify() {
+    const uint8_t samples_per_pass = 40;   // adjust as needed
+    uint16_t sample_min = 1024;
+    uint8_t j;
+
+    // Take several samples while the object is in front of the sensor
+    for (j = 0; j < samples_per_pass; j++) {
+        // Start single conversion
+        ADCSRA |= _BV(ADSC);
+
+        // Wait for ADC ISR to set the flag
+        while (!ADC_result_flag) {
+            ; // busy-wait (lab style)
+        }
+
+        // Copy and clear flag atomically
+        cli();
+        uint16_t s = ADC_result;
+        ADC_result_flag = 0;
+        sei();
+
+        if (s < sample_min) {
+            sample_min = s;
+        }
+
+        mTimer(2);  // small delay between samples
+    }
+
+    // --- Nearest calibration value ---
+    uint8_t best_class = 0;
+    uint16_t best_diff = 0xFFFF;
+
+    for (uint8_t i = 0; i < 4; i++) {
+        uint16_t calib = calibrationValues[i];
+        uint16_t diff = (sample_min > calib) ? (sample_min - calib) : (calib - sample_min);
+
+        if (diff < best_diff) {
+            best_diff = diff;
+            best_class = i;
+        }
+    }
+
+    // --- Optional ±10% sanity check ---
+    int classification = -1;  // -1 = unknown
+    uint16_t best_calib = calibrationValues[best_class];
+
+    // Check: 10 * |value - calib| <= calib  (i.e. <= 10% error)
+    if (best_calib != 0 && (best_diff * 10u) <= best_calib) {
+        classification = best_class;
+    } else {
+        classification = -1; // UNKNOWN / reject
+    }
+
+    // Re-arm optical interrupt for next object
+    EIFR |= _BV(INTF2);     // clear any pending flag
+    EIMSK |= _BV(INT2);     // enable INT2 again
+
+    // Enqueue classification if valid
+    if (classification >= 0) {
+        enqueue(classification);
+    }
+
+    // Debug output
+    LCDClear();
+    LCDWriteStringXY(0,0,"Val:");
+    LCDWriteIntXY(4,0,sample_min,4);
+
+    LCDWriteStringXY(0,1,"Class:");
+    LCDWriteIntXY(6,1,classification,2);
+    mTimer(500);  // shorter delay for responsiveness
 }
