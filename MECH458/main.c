@@ -38,10 +38,10 @@ volatile uint16_t calibrationValues[4] = {0,0,0,0};
 volatile uint8_t end_gate = 0;
 volatile unsigned int cur_value = 1024;
 volatile uint8_t accSpeed = 20;
-volatile uint8_t count = 0;
+volatile int count = 0;
 volatile unsigned int optical = 0;
 volatile uint8_t calibration_busy = 0;    // new: suppress main LCD updates during calibration
-volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101}; //half step
+volatile int stepperMotor[4] = {0b110000, 0b111000, 0b000110, 0b000111}; //half step or maybe full idk
 volatile int curr_bin = 2; // start on black
 
 // Pointer
@@ -98,7 +98,7 @@ int main(){
 	LCDClear();
 	LCDWriteStringXY(0,0,"DC Motor Ready");
 	LCDWriteStringXY(0,1,"Hi");
-	mTimer(2000);
+	mTimer(1000);
 	LCDClear();
 
     // Initialize queue once (uses the global head/tail)
@@ -195,23 +195,6 @@ int main(){
             change_dir_req = 0;
             EIMSK |= _BV(INT1); // re-enable INT1
         }
-		
-        if (ADC_result_flag){
-			
-			//Clear interrupt flag
-			ADC_result_flag = 0;
-
-            // Clear the screen first
-            LCDClear();
-
-            if(ADC_result < cur_value){
-                cur_value = ADC_result;
-			}
-
-			// Write ADC value to RL
-			LCDWriteStringXY(0,0,"RL:");
-			LCDWriteIntXY(4,0,cur_value,3);
-        }
     }
 
     return 0;
@@ -223,30 +206,33 @@ void nTurn(int n, int direction){   // n is steps
         accSpeed = 20;
         for(int i = 0; i < n; i++){
             if(i < 10 ){
-                PORTA = stepperMotor[count]; //try i%4 instead of count
-                mTimer(accSpeed);
                 count++;
                 if(count > 3){
                     count = 0;
                 }
+                PORTA = stepperMotor[count]; //try i%4 instead of count
+                mTimer(accSpeed);
+                
             }else if(i < n-19){                  // increase for more acc and held acc
                 if(accSpeed > 1){               //accelerate
-                    accSpeed -= 1;
+                   // accSpeed -= 1;
+                }
+                count++;
+                if(count > 3){
+                    count = 0;
                 }
                 PORTA = stepperMotor[count];    //holds if acc == 1
                 mTimer(accSpeed);
+                
+            }else{
                 count++;
                 if(count > 3){
                     count = 0;
                 }
-            }else{
                 PORTA = stepperMotor[count];
                 mTimer(accSpeed);
-                accSpeed = accSpeed + 1;
-                count++;
-                if(count > 3){
-                    count = 0;
-                }
+                //accSpeed = accSpeed + 1;
+                
             }
         }
     }
@@ -255,30 +241,30 @@ void nTurn(int n, int direction){   // n is steps
     accSpeed = 20;
         for(int i = 0; i < n; i++){
             if(i < 10 ){
-                PORTA = stepperMotor[count]; //try i%4 instead of count
-                mTimer(accSpeed);
                 count--;
                 if(count < 0){
                     count = 3;
                 }
+                PORTA = stepperMotor[count]; //try i%4 instead of count
+                mTimer(accSpeed);
             }else if(i < n-19){                  // increase for more acc and held acc
-                if(accSpeed > 1){               //accelerate
-                    //accSpeed -= 1;
+                // if(accSpeed > 1){               //accelerate
+                //     //accSpeed -= 1;
+                // }
+                count--;
+                if(count < 0){
+                    count = 3;
                 }
                 PORTA = stepperMotor[count];    //holds if acc == 1
                 mTimer(accSpeed);
+            }else{
                 count--;
                 if(count < 0){
                     count = 3;
                 }
-            }else{
                 PORTA = stepperMotor[count];
                 mTimer(accSpeed);
                 //accSpeed = accSpeed + 1;
-                count--;
-                if(count < 0){
-                    count = 3;
-                }
             }
         }
     }
