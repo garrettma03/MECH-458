@@ -98,13 +98,18 @@ void enqueue(link **h, link **t, link **nL){
 * 		 which the removed link will be assigned to
 */
 /* This will remove the link and element within the link from the head of the queue */
-void dequeue(link **h, link **deQueuedLink){
+void dequeue(link **h, link **deQueuedLink, link **t){
 	/* ENTER YOUR CODE HERE */
 	*deQueuedLink = *h;	// Will set to NULL if Head points to NULL
 	/* Ensure it is not an empty queue */
 	if (*h != NULL){
 		*h = (*h)->next;
 	}/*if*/
+
+	if (*h == NULL){
+		// Empty queue, set tail to NULL
+		*t = NULL;
+	}
 	
 	return;
 }/*dequeue*/

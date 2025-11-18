@@ -1,4 +1,4 @@
-/* Solution Set for the Lab 4A */
+/* Solution Set for the Final Project */
 /* 	
 	Course		: UVic Mechatronics 458
 	Milestone	: 4A
@@ -40,16 +40,15 @@ volatile unsigned int cur_value = 1024;
 volatile int accSpeed = 20;
 volatile int count = 0;
 volatile unsigned int optical = 0;
-volatile uint8_t calibration_busy = 0;    // new: suppress main LCD updates during calibration
 volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101}; //half step
 volatile int curr_bin; // start on black
 int foundBlack = 0; // flag for hall effect sensor
+
 // S-curve acceleration table (gentler)
 const uint8_t s_curve[16] = {
       0,  2,  6, 12, 22, 35, 50, 70,
      70, 50, 35, 22, 12,  6,  2,  0
 };
-
 
 // Pointer
 link *head; /* The ptr to the head of the queue */
@@ -129,7 +128,7 @@ int main(){
 	// by default, the ADC input (analog input is set to be ADC0 / PORTF0
 	ADCSRA |= _BV(ADEN); // enable ADC
 	ADCSRA |= _BV(ADIE); // enable interrupt of ADC
-	ADMUX |= _BV(ADLAR) | _BV(REFS0); // ADLAR sets the upper 2 bits of ADCL
+	ADMUX |= _BV(REFS0); // ADLAR sets the upper 2 bits of ADCL
 									  // to be the lower 2 of bits of the now 10-bit ADCH
 									  // REFS0 is bit 6 of the ADMUX register and sets
 									  // AVCC with external capacitor at AREF pin
@@ -138,16 +137,11 @@ int main(){
 	// sets the Global Enable for all interrupts ==========================
 	sei();
 	
-	// initialize the ADC, start one conversion at the beginning ==========
-	ADCSRA |= 0x20; // Enable auto-trigger enable inside ADC status register
-	ADCSRB |= 0x00; // Set ADC Auto Trigger Source to Free Running Mode
-	ADCSRA |= _BV(ADSC);
-	
 	//Motor implementation
 	dir = 1;
 	killswitch = 0;
-while(1){
-//Spin Motor
+
+    //Spin Motor
     nTurn(50, 1); //Turn 90 degrees clockwise
     mTimer(2000);
     nTurn(100, 1); //Turn 180 degrees clockwise
@@ -157,8 +151,6 @@ while(1){
     mTimer(2000);
     nTurn(100, -1); //Turn 180 degrees counter clockwise
     mTimer(2000);
-}
-    
 	
 	findBlack();
 	while(!foundBlack){
@@ -193,13 +185,13 @@ while(1){
 
 			// protect queue ops in case an ISR touches it
 			cli();
-			dequeue(&head, &item);
+			dequeue(&head, &item, &tail);
 			sei();
 
 			if (item != NULL) {
 				int next_bin = (int)(item->e.itemCode); // extract payload
+                rotateDish(next_bin);                    // rotate to the queued class
 				free(item);                              // remove node
-				rotateDish(next_bin);                    // rotate to the queued class
 			} else {
 				// queue empty — nothing to do (or handle default)
 			}
@@ -288,8 +280,6 @@ void nTurn(int n, int direction)
     }
 }
 
-
-
 void calibration(void){
     uint8_t samples_per_pass = 50;
     uint8_t i, j;
@@ -302,13 +292,13 @@ void calibration(void){
         cur_value = 1024;
         ADCSRA &= ~_BV(ADATE);   // one-shot ADC
 
-        // --- prepare for a NEW optical event ---
+        // Prepare for a NEW optical event 
         optical = 0;             // clear software flag
 
         EIFR |= _BV(INTF2);      // clear any stale INT2 flag
         EIMSK |= _BV(INT2);      // enable INT2
 
-        // wait until the optical ISR sets 'optical = 1'
+        // Wait until the optical ISR sets 'optical = 1'
         while (!optical) {
             ; // busy-wait; could add timeout if desired
         }
@@ -353,9 +343,8 @@ void calibration(void){
 
 
 void rotateDish(int next_bin) {
-    printf("Rotating dish to position based on value: %d\n", next_bin);
-
-int diff = next_bin - curr_bin;
+    
+    int diff = next_bin - curr_bin;
 
     if (diff == 1 || diff == -3) {          // and include edge case, rotate WHITE to STEEL
         // rotate 90 CW
@@ -374,9 +363,108 @@ int diff = next_bin - curr_bin;
         //yata
         curr_bin = next_bin;
     }
-	
-	PORTB = 0b00001110;
 
+}
+
+void classify() {
+    const uint8_t samples_per_pass = 40;
+    uint16_t sample_min = 1024;
+    uint8_t j;
+
+    // Take several samples while the object is in front of the sensor
+    for (j = 0; j < samples_per_pass; j++) {
+        // Start single conversion
+        ADCSRA |= _BV(ADSC);
+
+        // Wait for ADC ISR to set the flag
+        while (!ADC_result_flag) {
+            ; // Wait for flag to be risen
+        }
+
+        // Copy and clear flag atomically
+        cli();
+        uint16_t sample = ADC_result;
+        ADC_result_flag = 0;
+        sei();
+
+        if (sample < sample_min) {
+            sample_min = sample;
+        }
+
+        mTimer(2);  // small delay between samples
+    }
+
+    // Nearest calibration value
+    uint8_t best_class = 0;
+    uint16_t best_diff = 1024;
+
+    for (uint8_t i = 0; i < 4; i++) {
+        uint16_t calib = calibrationValues[i];
+        uint16_t diff;
+
+        // Calculate absolute difference
+        if (sample_min > calib) {
+            diff = sample_min - calib;
+        } else {
+            diff = calib - sample_min;
+        }
+
+        // If this is the smallest difference so far, store it
+        if (diff < best_diff) {
+            best_diff = diff;
+            best_class = i;
+        }
+    }
+
+    // Re-arm optical interrupt for next object
+    EIFR |= _BV(INTF2);     // clear any pending flag
+    EIMSK |= _BV(INT2);     // enable INT2 again
+
+    // Enqueue classification result using LinkedQueue
+    link *newLink = NULL;
+    initLink(&newLink);                 // allocate and initialize a new link
+    if (newLink == NULL) {
+        // allocation failed
+        LCDClear();
+        LCDWriteStringXY(0,0,"Alloc fail");
+        mTimer(250);
+    } else {
+        newLink->e.itemCode = (uint8_t)best_class;
+
+        // Block interrupts during queue operation
+        cli();
+        enqueue(&head, &tail, &newLink);
+        sei();
+    }
+
+    // Debug output
+    LCDClear();
+    LCDWriteStringXY(0,0,"Val:");
+    LCDWriteIntXY(4,0,sample_min,4);
+
+    LCDWriteStringXY(0,1,"Class:");
+    LCDWriteStringXY(6,1, materialNames[best_class]);
+    mTimer(500);
+
+}
+
+void findBlack(){
+    foundBlack = 0;
+
+    // clear pending flag and enable INT4
+    EIFR  |= _BV(INTF4);
+    EIMSK |= _BV(INT4);
+
+    LCDClear();
+    LCDWriteStringXY(0,0,"Finding Black");
+
+    // step in small increments so we can stop when foundBlack is set
+    while (!foundBlack) {
+        nTurn(1, 1);   // 1 step CW
+    }
+
+    // Found black, disable INT4
+    EIMSK &= ~_BV(INT4);
 }
 
 // mTimer function
@@ -421,6 +509,17 @@ void mTimer (int count)
    return;
 }  /* mTimer */
 
+void pwmSetup(){
+
+	TCCR0A |= 0b00000011; // Set TCCR0A to Fast PWM mode and clear upon reaching compare match STEP 1
+		
+	TCCR0A |= 0b10000000; // Clear OC0A on Compare Match, set OC0A at BOTTOM (non-inverting mode) STEP 3
+		
+	TCCR0B |= 0x02; // Set to no prescaling to 64 STEP 4
+		
+	OCR0A = 128; // Step 5
+}
+
 ISR(INT0_vect){ // Kill Switch
 	killswitch = 1;
 }
@@ -453,119 +552,6 @@ ISR(INT4_vect){ // ISR for Hall Effect on PE4 Pin 2
 ISR(ADC_vect) {
 	low_byte = ADCL;
     high_byte = ADCH;
-	ADC_result = high_byte << 2 | (low_byte >> 6); // combine ADCH and ADCL for full 10-bit value
+	ADC_result = (high_byte << 8) | low_byte; // combine ADCH and ADCL for full 10-bit value
 	ADC_result_flag = 1;
-}
-
-void pwmSetup(){
-
-	TCCR0A |= 0b00000011; // Set TCCR0A to Fast PWM mode and clear upon reaching compare match STEP 1
-		
-	TCCR0A |= 0b10000000; // Clear OC0A on Compare Match, set OC0A at BOTTOM (non-inverting mode) STEP 3
-		
-	TCCR0B |= 0x02; // Set to no prescaling to 64 STEP 4
-		
-	OCR0A = 128; // Step 5
-}
-
-void classify() {
-    const uint8_t samples_per_pass = 40;   // adjust as needed
-    uint16_t sample_min = 1024;
-    uint8_t j;
-
-    // Take several samples while the object is in front of the sensor
-    for (j = 0; j < samples_per_pass; j++) {
-        // Start single conversion
-        ADCSRA |= _BV(ADSC);
-
-        // Wait for ADC ISR to set the flag
-        while (!ADC_result_flag) {
-            ; // Wait for flag to be risen
-        }
-
-        // Copy and clear flag atomically
-        cli();
-        uint16_t sample = ADC_result;
-        ADC_result_flag = 0;
-        sei();
-
-        if (sample < sample_min) {
-            sample_min = sample;
-        }
-
-        mTimer(2);  // small delay between samples
-    }
-
-    // --- Nearest calibration value ---
-    uint8_t best_class = 0;
-    uint16_t best_diff = 1024;
-
-    for (uint8_t i = 0; i < 4; i++) {
-        uint16_t calib = calibrationValues[i];
-        uint16_t diff;
-
-        // Calculate absolute difference
-        if (sample_min > calib) {
-            diff = sample_min - calib;
-        } else {
-            diff = calib - sample_min;
-        }
-
-        // If this is the smallest difference so far, store it
-        if (diff < best_diff) {
-            best_diff = diff;
-            best_class = i;
-        }
-    }
-
-    // Re-arm optical interrupt for next object
-    EIFR |= _BV(INTF2);     // clear any pending flag
-    EIMSK |= _BV(INT2);     // enable INT2 again
-
-    // --- Enqueue classification result using LinkedQueue ---
-    link *newLink = NULL;
-    initLink(&newLink);                 // allocate and initialize a new link
-    if (newLink == NULL) {
-        // allocation failed — handle error (show on LCD, drop sample, etc.)
-        LCDClear();
-        LCDWriteStringXY(0,0,"Alloc fail");
-        mTimer(250);
-    } else {
-        newLink->e.itemCode = (uint8_t)best_class;
-
-        // protect queue ops if ISRs touch the queue
-        cli();
-        enqueue(&head, &tail, &newLink);
-        sei();
-    }
-
-    // Debug output
-    LCDClear();
-    LCDWriteStringXY(0,0,"Val:");
-    LCDWriteIntXY(4,0,sample_min,4);
-
-    LCDWriteStringXY(0,1,"Class:");
-    LCDWriteStringXY(6,1, materialNames[best_class]);
-    mTimer(500);
-
-}
-
-void findBlack(){
-    foundBlack = 0;
-
-    // clear pending flag and enable INT4
-    EIFR  |= _BV(INTF4);
-    EIMSK |= _BV(INT4);
-
-    LCDClear();
-    LCDWriteStringXY(0,0,"Finding Black");
-
-    // step in small increments so we can stop when foundBlack is set
-    while (!foundBlack) {
-        nTurn(1, 1);   // 1 step CW
-        // optional small delay if you want: mTimer(2);
-    }
-
-    // we’re at black -> stop stepping and disable INT4
-    EIMSK &= ~_BV(INT4);
 }
