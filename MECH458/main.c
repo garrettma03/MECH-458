@@ -65,7 +65,7 @@ void calibration(void);
 void findBlack();
 void nTurn(int n, int direction);
 void classify();
-//void rotateDish(int next_bin); 
+void rotateDish(int next_bin); 
 
 typedef enum {
     WHITE = 0,
@@ -96,9 +96,6 @@ int main(){
 
 	//Start PWM in the background
 	pwmSetup();
-
-    OCR0A = 90; // Maps ADC to duty cycle for the PWM
-	PORTB = 0b00001110; // Start clockwise
 
 	// Init LCD
 	InitLCD(LS_BLINK);
@@ -156,6 +153,9 @@ int main(){
 	while(!foundBlack){
 		; // Wait until hall effect sensor finds black
 	}
+	
+	OCR0A = 90; // Maps ADC to duty cycle for the PWM
+	PORTB = 0b00001110; // Start clockwise
 
 	calibration();
 	// Display results
@@ -164,7 +164,8 @@ int main(){
 
     EIFR |= _BV(INTF3);
     EIMSK |= _BV(INT3);
-	EICRA = (EICRA & ~(_BV(ISC31) | _BV(ISC30))) | _BV(ISC31);
+	EICRA &= ~_BV(ISC30);
+    EICRA |=  _BV(ISC31);
 
     
     while(1){
@@ -183,7 +184,7 @@ int main(){
 
 			link *item = NULL;
 
-			// protect queue ops in case an ISR touches it
+			// protect queue operation in case an ISR touches it
 			cli();
 			dequeue(&head, &item, &tail);
 			sei();
@@ -195,6 +196,7 @@ int main(){
 			} else {
 				// queue empty — nothing to do (or handle default)
 			}
+            PORTB = 0b00001110; // Resume clockwise
 		}
 
 		if(optical){
@@ -363,6 +365,14 @@ void rotateDish(int next_bin) {
         //yata
         curr_bin = next_bin;
     }
+	
+	LCDClear();
+	LCDWriteStringXY(0,0,"Rotating to:");
+	LCDWriteStringXY(0,1, materialNames[next_bin]);
+	LCDWriteIntXY(1,0,curr_bin,1);
+	LCDWriteIntXY(1,2,next_bin,1);
+	LCDWriteIntXY(1,4,diff,2);
+	mTimer(5000);
 
 }
 
@@ -537,7 +547,7 @@ ISR(INT2_vect) { // Trigger ADC conversion when object in optical sensor
     optical = 1;    
 }
 
-ISR(INT3_vect){ // ISR for end gate active low
+ISR(INT3_vect){ // ISR for end gate active low Pin 18
 	PORTB = 0x0F; // Brake
 	end_gate = 1;
 }
