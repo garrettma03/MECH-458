@@ -1,3 +1,5 @@
+// Replace INT2 (optical sensor) with INT3 (end gate)
+
 /* Solution Set for the Final Project */
 /* 	
 	Course		: UVic Mechatronics 458
@@ -45,10 +47,41 @@ volatile int curr_bin; // start on black
 int foundBlack = 0; // flag for hall effect sensor
 
 // S-curve acceleration table (gentler)
-const uint8_t s_curve[16] = {
-      0,  2,  6, 12, 22, 35, 50, 70,
-     70, 50, 35, 22, 12,  6,  2,  0
+volatile int arr50[50] = {
+    20, 20, 19, 18, 17,
+    16, 15, 14, 14, 13,
+    13, 12, 12, 11, 11,
+    10, 10, 9, 9, 8,
+    8, 7, 7, 6, 6,
+    6, 6, 7, 7, 8,
+    8, 9, 9, 10, 10,
+    11, 11, 12, 12, 13,
+    13, 14, 14, 15, 16,
+    17, 18, 19, 20, 20
 };
+
+volatile int arr180[100] = {
+     20, 20, 19, 19, 18,
+     18, 17, 17, 16, 16,
+     15, 15, 14, 14, 13,
+     13, 12, 12, 11, 11,
+     10, 10, 9, 9, 8,
+     8, 7, 7, 6, 6,
+     6, 6, 6, 6, 6,
+     6, 6, 6, 6, 6,
+     6, 6, 6, 6, 6,
+     6, 6, 6, 6, 6,
+     6, 6, 6, 6, 6,
+     6, 6, 6, 6, 6,
+     6, 6, 6, 6, 6,
+     6, 6, 6, 6, 6,
+     6, 6, 7, 7, 8,
+     8, 9, 9, 10, 10,
+     11, 11, 12, 12, 13,
+     13, 14, 14, 15, 15,
+     16, 16, 17, 17, 18,
+     18, 19, 19, 20, 20
+ };
 
 // Pointer
 link *head; /* The ptr to the head of the queue */
@@ -117,9 +150,10 @@ int main(){
 	EICRA |= (_BV(ISC01) | _BV(ISC00));
 	EIMSK |= (_BV(INT1)); // Change direction on PD1
 	EICRA |= (_BV(ISC11) | _BV(ISC10));
-	EIMSK |= (_BV(INT2)); // Optical Reflector on PD2 Pin 19
-	EICRA |= (_BV(ISC21) | _BV(ISC20)); // rising edge interrupt
+    EIMSK |= (_BV(INT3)); // Optical Reflector on PD2 Pin 19
+	EICRA |= (_BV(ISC31) | _BV(ISC30)); // rising edge interrupt
     EICRB |= _BV(ISC41) | _BV(ISC40);  // rising edge for INT4
+	
 
 	// config ADC =========================================================
 	// by default, the ADC input (analog input is set to be ADC0 / PORTF0
@@ -138,7 +172,8 @@ int main(){
 	dir = 1;
 	killswitch = 0;
 
-    //Spin Motor
+    while(1){
+        //Spin Motor
     nTurn(50, 1); //Turn 90 degrees clockwise
     mTimer(2000);
     nTurn(100, 1); //Turn 180 degrees clockwise
@@ -148,13 +183,15 @@ int main(){
     mTimer(2000);
     nTurn(100, -1); //Turn 180 degrees counter clockwise
     mTimer(2000);
+    }
+    
 	
 	findBlack();
 	while(!foundBlack){
 		; // Wait until hall effect sensor finds black
 	}
 	
-	OCR0A = 90; // Maps ADC to duty cycle for the PWM
+	OCR0A = 128; // Maps ADC to duty cycle for the PWM
 	PORTB = 0b00001110; // Start clockwise
 
 	calibration();
@@ -162,11 +199,10 @@ int main(){
 	mTimer(5000);
     curr_bin = BLACK;
 
-    EIFR |= _BV(INTF3);
-    EIMSK |= _BV(INT3);
-	EICRA &= ~_BV(ISC30);
-    EICRA |=  _BV(ISC31);
-
+    EIFR |= _BV(INTF2); // End Gate stuff
+    EIMSK |= _BV(INT2);
+	EICRA &= ~_BV(ISC20);
+    EICRA |=  _BV(ISC21);
     
     while(1){
 
@@ -181,6 +217,7 @@ int main(){
 		
 		if(end_gate){
 			end_gate = 0;
+            PORTB = 0x0F; // Brake
 
 			link *item = NULL;
 
@@ -227,58 +264,40 @@ int main(){
     return 0;
 }
 
-// nTurn function
+//nturn
 void nTurn(int n, int direction)
 {
-    int start_delay = 25;     // slower start
-    int min_delay   = 14;     // slower maximum speed
-
-    // More accel/decel steps gives a smoother, safer ramp
-    int accel_steps = n / 3;      
-    int decel_steps = accel_steps;
-    int cruise_steps = n - accel_steps - decel_steps;
-
-    const int curve_len = 16;
-
-    for (int i = 0; i < n; i++) {
-
-        int delay;
-
-        // ---------- ACCEL ----------
-        if (i < accel_steps) {
-            int idx = (i * (curve_len - 1)) / accel_steps;
-            int easing = s_curve[idx];  // 0..70
-
-            delay = start_delay -
-                    ((start_delay - min_delay) * easing) / 70;
+    if(n == 50){
+        for (int i = 0; i < n; i++) {
+            // ---------- STEP MOTOR ----------
+            if (direction == 1) {
+                count++;
+                if (count > 3) count = 0;
+                PORTA = stepperMotor[count];
+                mTimer(arr50[i]);
+            } else {
+                count--;
+                if (count < 0) count = 3;
+                PORTA = stepperMotor[count];
+                mTimer(arr50[i]);
+            }
         }
 
-        // ---------- CRUISE ----------
-        else if (i < accel_steps + cruise_steps) {
-            delay = min_delay;
+        }else{
+
+        for (int i = 0; i < n; i++) {
+            if (direction == 1) {
+                count++;
+                if (count > 3) count = 0;
+                PORTA = stepperMotor[count];
+                mTimer(arr180[i]);
+            } else {
+                count--;
+                if (count < 0) count = 3;
+                PORTA = stepperMotor[count];
+                mTimer(arr180[i]);
+            }
         }
-
-        // ---------- DECEL ----------
-        else {
-            int decel_i = i - (accel_steps + cruise_steps);
-            int idx = (decel_i * (curve_len - 1)) / decel_steps;
-            int easing = s_curve[idx];
-
-            delay = min_delay +
-                    ((start_delay - min_delay) * easing) / 70;
-        }
-
-        // ---------- STEP MOTOR ----------
-        if (direction == 1) {    // CW
-            count++;
-            if (count > 3) count = 0;
-        } else {                  // CCW
-            count--;
-            if (count < 0) count = 3;
-        }
-
-        PORTA = stepperMotor[count];
-        mTimer(delay);
     }
 }
 
@@ -297,16 +316,16 @@ void calibration(void){
         // Prepare for a NEW optical event 
         optical = 0;             // clear software flag
 
-        EIFR |= _BV(INTF2);      // clear any stale INT2 flag
-        EIMSK |= _BV(INT2);      // enable INT2
+        EIFR |= _BV(INTF3);      // clear any stale INT3 flag
+        EIMSK |= _BV(INT3);      // enable INT
 
         // Wait until the optical ISR sets 'optical = 1'
         while (!optical) {
             ; // busy-wait; could add timeout if desired
         }
 
-        // now object is in front of sensor; we can disable INT2
-        EIMSK &= ~_BV(INT2);
+        // now object is in front of sensor; we can disable INT3
+        EIMSK &= ~_BV(INT3);
 
         // --- take ADC samples and find min ---
         for (j = 0; j < samples_per_pass; j++) {
@@ -350,10 +369,10 @@ void rotateDish(int next_bin) {
     int diff = next_bin - curr_bin;
 
     if (diff == 1 || diff == -3) {          // 90 CW
-        nTurn(50, 1);
+        nTurn(50, -1);
         curr_bin = next_bin;
     } else if (diff == -1 || diff == 3) {   // 90 CCW
-        nTurn(50, -1);
+        nTurn(50, 1);
         curr_bin = next_bin;
     } else if (abs(diff) == 2) {            // 180
         nTurn(100, 1);
@@ -433,8 +452,8 @@ void classify() {
     }
 
     // Re-arm optical interrupt for next object
-    EIFR |= _BV(INTF2);     // clear any pending flag
-    EIMSK |= _BV(INT2);     // enable INT2 again
+    EIFR |= _BV(INTF3);     // clear any pending flag
+    EIMSK |= _BV(INT3);     // enable INT3 again
 
     // Enqueue classification result using LinkedQueue
     link *newLink = NULL;
@@ -546,16 +565,15 @@ ISR(INT1_vect){
     change_dir_req = 1;
 }
 
-// Optical reflector interrupt
-ISR(INT2_vect) { // Trigger ADC conversion when object in optical sensor
-    EIMSK &= ~_BV(INT2);   // disable INT2 to avoid retrigger/bounce
-    EIFR  |= _BV(INTF2);   // clear any pending flag
-    optical = 1;    
+ISR(INT2_vect){ // ISR for end gate active low Pin 19
+	end_gate = 1;
 }
 
-ISR(INT3_vect){ // ISR for end gate active low Pin 18
-	PORTB = 0x0F; // Brake
-	end_gate = 1;
+// Optical reflector interrupt
+ISR(INT3_vect) { // Trigger ADC conversion when object in optical sensor
+    EIMSK &= ~_BV(INT3);   // disable INT3 to avoid retrigger/bounce
+    EIFR  |= _BV(INTF3);   // clear any pending flag
+    optical = 1;    
 }
 
 ISR(INT4_vect){ // ISR for Hall Effect on PE4 Pin 2
