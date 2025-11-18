@@ -42,7 +42,14 @@ volatile int count = 0;
 volatile unsigned int optical = 0;
 volatile uint8_t calibration_busy = 0;    // new: suppress main LCD updates during calibration
 volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101}; //half step
-volatile int curr_bin = 2; // start on black
+volatile int curr_bin; // start on black
+int foundBlack = 0; // flag for hall effect sensor
+// S-curve acceleration table (gentler)
+const uint8_t s_curve[16] = {
+      0,  2,  6, 12, 22, 35, 50, 70,
+     70, 50, 35, 22, 12,  6,  2,  0
+};
+
 
 // Pointer
 link *head; /* The ptr to the head of the queue */
@@ -59,6 +66,7 @@ void calibration(void);
 void findBlack();
 void nTurn(int n, int direction);
 void classify();
+//void rotateDish(int next_bin); 
 
 typedef enum {
     WHITE = 0,
@@ -115,10 +123,7 @@ int main(){
 	EICRA |= (_BV(ISC11) | _BV(ISC10));
 	EIMSK |= (_BV(INT2)); // Optical Reflector on PD2 Pin 19
 	EICRA |= (_BV(ISC21) | _BV(ISC20)); // rising edge interrupt
-    //EIMSK |= (_BV(INT3)); // End gate on PD3 Pin 18
-	//EICRA |= (_BV(ISC31) | _BV(ISC30));
-	//EIMSK |= (_BV(INT4)); // Hall Effect on PE4 Pin 2
-	//EICRA |= (_BV(ISC41) | _BV(ISC40));
+    EICRB |= _BV(ISC41) | _BV(ISC40);  // rising edge for INT4
 
 	// config ADC =========================================================
 	// by default, the ADC input (analog input is set to be ADC0 / PORTF0
@@ -141,8 +146,8 @@ int main(){
 	//Motor implementation
 	dir = 1;
 	killswitch = 0;
-
-    //Spin Motor
+while(1){
+//Spin Motor
     nTurn(50, 1); //Turn 90 degrees clockwise
     mTimer(2000);
     nTurn(100, 1); //Turn 180 degrees clockwise
@@ -152,10 +157,23 @@ int main(){
     mTimer(2000);
     nTurn(100, -1); //Turn 180 degrees counter clockwise
     mTimer(2000);
+}
+    
+	
+	findBlack();
+	while(!foundBlack){
+		; // Wait until hall effect sensor finds black
+	}
 
 	calibration();
 	// Display results
 	mTimer(5000);
+    curr_bin = BLACK;
+
+    EIFR |= _BV(INTF3);
+    EIMSK |= _BV(INT3);
+	EICRA = (EICRA & ~(_BV(ISC31) | _BV(ISC30))) | _BV(ISC31);
+
     
     while(1){
 
@@ -170,6 +188,21 @@ int main(){
 		
 		if(end_gate){
 			end_gate = 0;
+
+			link *item = NULL;
+
+			// protect queue ops in case an ISR touches it
+			cli();
+			dequeue(&head, &item);
+			sei();
+
+			if (item != NULL) {
+				int next_bin = (int)(item->e.itemCode); // extract payload
+				free(item);                              // remove node
+				rotateDish(next_bin);                    // rotate to the queued class
+			} else {
+				// queue empty — nothing to do (or handle default)
+			}
 		}
 
 		if(optical){
@@ -201,74 +234,61 @@ int main(){
 }
 
 // nTurn function
-void nTurn(int n, int direction){   // n is steps
-    if(direction == 1){             //Turn clockwise
-        accSpeed = 20;
-        for(int i = 0; i < n; i++){
-            if(i < 10 ){
-                count++;
-                if(count > 3){
-                    count = 0;
-                }
-                PORTA = stepperMotor[count]; //try i%4 instead of count
-                mTimer(accSpeed);
-                
-            }else if(i < n-19){                  // increase for more acc and held acc
-                // if(accSpeed > 1){               //accelerate
-                //    accSpeed -= 0.2;
-                // }
-                count++;
-                if(count > 3){
-                    count = 0;
-                }
-                PORTA = stepperMotor[count];    //holds if acc == 1
-                mTimer(accSpeed);
-                
-            }else{
-                count++;
-                if(count > 3){
-                    count = 0;
-                }
-                PORTA = stepperMotor[count];
-                mTimer(accSpeed);
-                //accSpeed = accSpeed + 0.2;
-                
-            }
-        }
-    }
+void nTurn(int n, int direction)
+{
+    int start_delay = 25;     // slower start
+    int min_delay   = 14;     // slower maximum speed
 
-    if(direction == -1){ //Turn Couter clockwise
-    accSpeed = 20;
-        for(int i = 0; i < n; i++){
-            if(i < 10 ){
-                count--;
-                if(count < 0){
-                    count = 3;
-                }
-                PORTA = stepperMotor[count]; //try i%4 instead of count
-                mTimer(accSpeed);
-            }else if(i < n-19){                  // increase for more acc and held acc
-                // if(accSpeed > 1){               //accelerate
-                //     accSpeed -= 0.2;
-                // }
-                count--;
-                if(count < 0){
-                    count = 3;
-                }
-                PORTA = stepperMotor[count];    //holds if acc == 1
-                mTimer(accSpeed);
-            }else{
-                count--;
-                if(count < 0){
-                    count = 3;
-                }
-                PORTA = stepperMotor[count];
-                mTimer(accSpeed);
-                //accSpeed = accSpeed + 0.2;
-            }
+    // More accel/decel steps gives a smoother, safer ramp
+    int accel_steps = n / 3;      
+    int decel_steps = accel_steps;
+    int cruise_steps = n - accel_steps - decel_steps;
+
+    const int curve_len = 16;
+
+    for (int i = 0; i < n; i++) {
+
+        int delay;
+
+        // ---------- ACCEL ----------
+        if (i < accel_steps) {
+            int idx = (i * (curve_len - 1)) / accel_steps;
+            int easing = s_curve[idx];  // 0..70
+
+            delay = start_delay -
+                    ((start_delay - min_delay) * easing) / 70;
         }
+
+        // ---------- CRUISE ----------
+        else if (i < accel_steps + cruise_steps) {
+            delay = min_delay;
+        }
+
+        // ---------- DECEL ----------
+        else {
+            int decel_i = i - (accel_steps + cruise_steps);
+            int idx = (decel_i * (curve_len - 1)) / decel_steps;
+            int easing = s_curve[idx];
+
+            delay = min_delay +
+                    ((start_delay - min_delay) * easing) / 70;
+        }
+
+        // ---------- STEP MOTOR ----------
+        if (direction == 1) {    // CW
+            count++;
+            if (count > 3) count = 0;
+        } else {                  // CCW
+            count--;
+            if (count < 0) count = 3;
+        }
+
+        PORTA = stepperMotor[count];
+        mTimer(delay);
     }
 }
+
+
 
 void calibration(void){
     uint8_t samples_per_pass = 50;
@@ -354,6 +374,8 @@ int diff = next_bin - curr_bin;
         //yata
         curr_bin = next_bin;
     }
+	
+	PORTB = 0b00001110;
 
 }
 
@@ -416,15 +438,16 @@ ISR(INT2_vect) { // Trigger ADC conversion when object in optical sensor
     optical = 1;    
 }
 
-/*ISR(INT3_vect){ // ISR for end gate active low
+ISR(INT3_vect){ // ISR for end gate active low
 	PORTB = 0x0F; // Brake
 	end_gate = 1;
-}*/
+}
 
-/*ISR(INT4_vect){ // ISR for Hall Effect on PE4 Pin 2
-	//PORTB = 0x0F; // Brake
-	//Constantly Triggering
-}*/
+ISR(INT4_vect){ // ISR for Hall Effect on PE4 Pin 2
+    EIMSK &= ~_BV(INT4);   // disable INT4 to avoid retrigger/bounce
+    EIFR  |= _BV(INTF4);   // clear any pending flag
+    foundBlack = 1;
+}
 
 // the interrupt will be trigured if the ADC is done ========================
 ISR(ADC_vect) {
@@ -500,14 +523,21 @@ void classify() {
     EIMSK |= _BV(INT2);     // enable INT2 again
 
     // --- Enqueue classification result using LinkedQueue ---
+    link *newLink = NULL;
     initLink(&newLink);                 // allocate and initialize a new link
+    if (newLink == NULL) {
+        // allocation failed — handle error (show on LCD, drop sample, etc.)
+        LCDClear();
+        LCDWriteStringXY(0,0,"Alloc fail");
+        mTimer(250);
+    } else {
+        newLink->e.itemCode = (uint8_t)best_class;
 
-    // Store the classification in the element payload.
-    // Assuming element has a field like 'itemCode' (from your previous lab code):
-    newLink->e.itemCode = (uint8_t)best_class;
-
-    // Put it in the queue
-    enqueue(&head, &tail, &newLink);
+        // protect queue ops if ISRs touch the queue
+        cli();
+        enqueue(&head, &tail, &newLink);
+        sei();
+    }
 
     // Debug output
     LCDClear();
@@ -517,4 +547,25 @@ void classify() {
     LCDWriteStringXY(0,1,"Class:");
     LCDWriteStringXY(6,1, materialNames[best_class]);
     mTimer(500);
+
+}
+
+void findBlack(){
+    foundBlack = 0;
+
+    // clear pending flag and enable INT4
+    EIFR  |= _BV(INTF4);
+    EIMSK |= _BV(INT4);
+
+    LCDClear();
+    LCDWriteStringXY(0,0,"Finding Black");
+
+    // step in small increments so we can stop when foundBlack is set
+    while (!foundBlack) {
+        nTurn(1, 1);   // 1 step CW
+        // optional small delay if you want: mTimer(2);
+    }
+
+    // we’re at black -> stop stepping and disable INT4
+    EIMSK &= ~_BV(INT4);
 }
