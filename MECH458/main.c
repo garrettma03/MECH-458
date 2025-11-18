@@ -346,34 +346,40 @@ void calibration(void){
 
 void rotateDish(int next_bin) {
     
+    int prev = curr_bin;                // remember starting bin
     int diff = next_bin - curr_bin;
 
-    if (diff == 1 || diff == -3) {          // and include edge case, rotate WHITE to STEEL
-        // rotate 90 CW
-        nTurn(50, 1); //Turn 90 degrees clockwise
-        curr_bin = next_bin;                //check with lewis on this
-    } else if (diff == -1 || diff == 3) {   // and includes edge case, rotate STEEL to WHITE
-        // rotate 90 CCW
+    if (diff == 1 || diff == -3) {          // 90 CW
+        nTurn(50, 1);
+        curr_bin = next_bin;
+    } else if (diff == -1 || diff == 3) {   // 90 CCW
         nTurn(50, -1);
         curr_bin = next_bin;
-    } else if (abs(diff) == 2) {
-        // rotate 180
+    } else if (abs(diff) == 2) {            // 180
         nTurn(100, 1);
         curr_bin = next_bin;
-    } else{
-        // diff is 0, do nothing
-        //yata
-        curr_bin = next_bin;
+    } else {
+        curr_bin = next_bin;                // no move
     }
-	
-	LCDClear();
-	LCDWriteStringXY(0,0,"Rotating to:");
-	LCDWriteStringXY(0,1, materialNames[next_bin]);
-	LCDWriteIntXY(1,0,curr_bin,1);
-	LCDWriteIntXY(1,2,next_bin,1);
-	LCDWriteIntXY(1,4,diff,2);
-	mTimer(5000);
 
+    // normalize diff for display: -1, 0, 1, 2
+    int disp = diff;
+    if (disp == 3)  disp = -1;
+    if (disp == -3) disp = 1;
+
+    LCDClear();
+    // Line 0: Cur and Nxt
+    LCDWriteStringXY(0,0,"Cur:");
+    LCDWriteIntXY(4,0,prev,1);
+    LCDWriteStringXY(6,0,"Nxt:");
+    LCDWriteIntXY(10,0,next_bin,1);
+
+    // Line 1: Diff and material
+    LCDWriteStringXY(0,1,"Dif:");
+    LCDWriteIntXY(4,1,disp,2);
+    LCDWriteStringXY(7,1, materialNames[next_bin]);
+
+    mTimer(500);
 }
 
 void classify() {
