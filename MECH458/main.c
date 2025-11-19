@@ -33,7 +33,7 @@ volatile unsigned int ADC_result;
 volatile unsigned int ADC_result_flag;
 volatile unsigned int dir = 1;
 volatile unsigned int killswitch = 0;
-volatile unsigned int change_dir_req = 0;
+volatile unsigned int pause = 0;
 volatile uint8_t high_byte = 0;
 volatile uint8_t low_byte = 0;
 volatile uint16_t calibrationValues[4] = {0,0,0,0};
@@ -45,6 +45,12 @@ volatile unsigned int optical = 0;
 volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101}; //half step
 volatile int curr_bin; // start on black
 int foundBlack = 0; // flag for hall effect sensor
+volatile int classify_busy = 0;
+volatile int isEndGate = 0;
+volatile int whiteVal = 0;
+volatile int blackVal = 0;
+volatile int steelVal = 0;
+volatile int alumVal = 0;
 
 // S-curve acceleration table (gentler)
 volatile int arr50[50] = {
@@ -61,14 +67,12 @@ volatile int arr50[50] = {
 };
 
 volatile int arr180[100] = {
-     20, 20, 19, 19, 18,
-     18, 17, 17, 16, 16,
-     15, 15, 14, 14, 13,
-     13, 12, 12, 11, 11,
-     10, 10, 9, 9, 8,
-     8, 7, 7, 6, 6,
-     6, 6, 6, 6, 6,
-     6, 6, 6, 6, 6,
+     20, 20, 19, 19, 19,
+     18, 18, 18, 17, 17,
+     17, 16, 16, 15, 15,
+     14, 14, 13, 13, 12,
+     12, 11, 11, 10, 10,
+     9, 8, 7, 7, 7,
      6, 6, 6, 6, 6,
      6, 6, 6, 6, 6,
      6, 6, 6, 6, 6,
@@ -172,18 +176,18 @@ int main(){
 	dir = 1;
 	killswitch = 0;
 
-    while(1){
-        //Spin Motor
-    nTurn(50, 1); //Turn 90 degrees clockwise
-    mTimer(2000);
-    nTurn(100, 1); //Turn 180 degrees clockwise
-    mTimer(2000);
+    // while(1){
+    // Spin Motor
+    // nTurn(50, 1); //Turn 90 degrees clockwise
+    // mTimer(2000);
+    // nTurn(100, 1); //Turn 180 degrees clockwise
+    // mTimer(2000);
 
-    nTurn(50, -1); //Turn 60 degrees counter clockwise
-    mTimer(2000);
-    nTurn(100, -1); //Turn 180 degrees counter clockwise
-    mTimer(2000);
-    }
+    // nTurn(50, -1); //Turn 60 degrees counter clockwise
+    // mTimer(2000);
+    // nTurn(100, -1); //Turn 180 degrees counter clockwise
+    // mTimer(2000);
+    // }
     
 	
 	findBlack();
@@ -191,12 +195,14 @@ int main(){
 		; // Wait until hall effect sensor finds black
 	}
 	
-	OCR0A = 128; // Maps ADC to duty cycle for the PWM
+	OCR0A = 200; // Maps ADC to duty cycle for the PWM
 	PORTB = 0b00001110; // Start clockwise
 
 	calibration();
 	// Display results
 	mTimer(5000);
+    LCDClear();
+    LCDWriteStringXY(0,0,"GO!");
     curr_bin = BLACK;
 
     EIFR |= _BV(INTF2); // End Gate stuff
@@ -206,57 +212,93 @@ int main(){
     
     while(1){
 
-        if(killswitch){
-			//PORTB = 0x0F; // Brake
-			cli(); // Clear all interrupts
-			LCDClear();
-			LCDWriteStringXY(0,0,"KILLSWITCH ON");
-			LCDWriteStringXY(0,1,"MOTOR STOPPED");
-			return 0;
-		}
+        if(killswitch == 1){
+            //disable adc interupt
+            if(newLink == NULL){
+                mTimer(50);
+                PORTB = 0x0F;
+                LCDClear();
+                LCDWriteStringXY(0,0,"White");
+                LCDWriteIntXY(5,0,whiteVal,2);
+                LCDWriteStringXY(8,0,"Black");
+                LCDWriteIntXY(14,0,blackVal,2);
+
+                LCDWriteStringXY(0,1,"Alum");
+                LCDWriteIntXY(5,1,alumVal,2);
+                LCDWriteStringXY(7,1,"Steel");
+                LCDWriteIntXY(13,1,steelVal,2);
+                mTimer(5000);
+                return 0;
+        }
+    }
 		
 		if(end_gate){
-			end_gate = 0;
+            end_gate = 0;
             PORTB = 0x0F; // Brake
 
-			link *item = NULL;
+            link *item = NULL;
 
-			// protect queue operation in case an ISR touches it
-			cli();
-			dequeue(&head, &item, &tail);
-			sei();
+            // protect queue operation in case an ISR touches it
+            cli();
+            dequeue(&head, &item, &tail);
 
-			if (item != NULL) {
-				int next_bin = (int)(item->e.itemCode); // extract payload
+            // Count items
+            uint8_t qcount = 0;
+            uint8_t qcodes[8] = {0};
+            link *iter = head;
+            while (iter != NULL) {
+                qcodes[qcount++] = (uint8_t)iter->e.itemCode;
+                iter = iter->next;
+            }
+            sei();
+
+            // Display queue summary on LCD
+            LCDClear();
+            LCDWriteStringXY(0,0,"Qsz:");
+            LCDWriteIntXY(4,0, size(&head,&tail),3);
+
+            LCDWriteStringXY(0,1,"Items:");
+            // show up to 4 of the copied codes on line 1 (each 1-2 chars)
+            for (uint8_t k = 0; k < qcount; k++) {
+                LCDWriteIntXY(7 + (k*3),1, qcodes[k],1);
+            }
+
+            if (item != NULL) {
+                int next_bin = (int)(item->e.itemCode); // extract payload
                 rotateDish(next_bin);                    // rotate to the queued class
-				free(item);                              // remove node
-			} else {
-				// queue empty — nothing to do (or handle default)
-			}
+                free(item);                              // remove node
+            } else {
+                // queue empty — nothing to do (or handle default)
+            }
             PORTB = 0b00001110; // Resume clockwise
-		}
+        }
 
 		if(optical){
 			optical = 0;
 			classify();
 		}
 
-        if (change_dir_req) {
+        if (pause) {
+
+            int pauseCount = 0;
+
             mTimer(20); // debounce delay
             if (PIND & _BV(PD1)) { // still pressed
-                //PORTB = 0x0F; // Brake
-                if (dir) {
-                    dir = 0;
-                    PORTB = 0x0D;
-                } else {
-                    dir = 1;
-                    PORTB = 0x0E;
-                }
+                PORTB = 0x0F; // Brake
                 // Wait until button is released
                 while (PIND & _BV(PD1));
 				mTimer(20);
+
+                // Display queue summary on LCD
+                LCDClear();
+                LCDWriteStringXY(0,0,"Items: ");
+                while(newLink != NULL){
+                    LCDWriteIntXY(0,pauseCount,newLink->e.itemCode,1);
+                    pauseCount++;
+                }
+                
             }
-            change_dir_req = 0;
+            pause = 0;
             EIMSK |= _BV(INT1); // re-enable INT1
         }
     }
@@ -386,23 +428,11 @@ void rotateDish(int next_bin) {
     if (disp == 3)  disp = -1;
     if (disp == -3) disp = 1;
 
-    LCDClear();
-    // Line 0: Cur and Nxt
-    LCDWriteStringXY(0,0,"Cur:");
-    LCDWriteIntXY(4,0,prev,1);
-    LCDWriteStringXY(6,0,"Nxt:");
-    LCDWriteIntXY(10,0,next_bin,1);
-
-    // Line 1: Diff and material
-    LCDWriteStringXY(0,1,"Dif:");
-    LCDWriteIntXY(4,1,disp,2);
-    LCDWriteStringXY(7,1, materialNames[next_bin]);
-
-    mTimer(500);
 }
 
 void classify() {
-    const uint8_t samples_per_pass = 40;
+
+    const uint8_t samples_per_pass = 30;
     uint16_t sample_min = 1024;
     uint8_t j;
 
@@ -451,9 +481,18 @@ void classify() {
         }
     }
 
-    // Re-arm optical interrupt for next object
-    EIFR |= _BV(INTF3);     // clear any pending flag
-    EIMSK |= _BV(INT3);     // enable INT3 again
+    if(best_class == 0){
+        whiteVal++;
+    }
+    if(best_class == 1){
+        alumVal++;
+    } 
+    if(best_class == 2){
+        blackVal++;
+    } 
+    if(best_class == 3){
+        steelVal++;
+    }
 
     // Enqueue classification result using LinkedQueue
     link *newLink = NULL;
@@ -472,14 +511,18 @@ void classify() {
         sei();
     }
 
-    // Debug output
-    LCDClear();
-    LCDWriteStringXY(0,0,"Val:");
-    LCDWriteIntXY(4,0,sample_min,4);
+    // Re-arm optical interrupt for next object
+    EIFR |= _BV(INTF3);     // clear any pending flag
+    EIMSK |= _BV(INT3);     // enable INT3 again
 
-    LCDWriteStringXY(0,1,"Class:");
-    LCDWriteStringXY(6,1, materialNames[best_class]);
-    mTimer(500);
+    // // Debug output
+    // LCDClear();
+    // LCDWriteStringXY(0,0,"Val:");
+    // LCDWriteIntXY(4,0,sample_min,4);
+
+    // LCDWriteStringXY(0,1,"Class:");
+    // LCDWriteStringXY(6,1, materialNames[best_class]);
+    // mTimer(500);
 
 }
 
@@ -551,8 +594,6 @@ void pwmSetup(){
 	TCCR0A |= 0b10000000; // Clear OC0A on Compare Match, set OC0A at BOTTOM (non-inverting mode) STEP 3
 		
 	TCCR0B |= 0x02; // Set to no prescaling to 64 STEP 4
-		
-	OCR0A = 128; // Step 5
 }
 
 ISR(INT0_vect){ // Kill Switch
@@ -562,7 +603,7 @@ ISR(INT0_vect){ // Kill Switch
 ISR(INT1_vect){ 
 	// Disable INT1 to avoid bounces triggering repeatedly
     EIMSK &= ~_BV(INT1);
-    change_dir_req = 1;
+    pause = 1;
 }
 
 ISR(INT2_vect){ // ISR for end gate active low Pin 19
