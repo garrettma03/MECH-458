@@ -51,14 +51,7 @@ volatile int blackVal = 0;
 volatile int steelVal = 0;
 volatile int alumVal = 0;
 volatile int classifying = 0;
-
-// New stepper code using timer3
-volatile int stepper_active = 0;      // Is stepper currently moving?
-volatile int stepper_steps_remaining = 0;
-volatile int stepper_direction = 1;   // 1 = CW, -1 = CCW
-volatile int stepper_index = 0;       // Index into acceleration array
-volatile int *stepper_arr = NULL;     // Pointer to arr50 or arr180
-volatile uint16_t stepper_last_time = 0;
+volatile int pauseCount = 0;
 
 // S-curve acceleration table (gentler)
 volatile int arr50[50] = {
@@ -66,8 +59,8 @@ volatile int arr50[50] = {
     16, 15, 14, 14, 13,
     13, 12, 12, 11, 11,
     10, 10, 9, 9, 8,
-    8, 7, 7, 6, 6,
-    6, 6, 7, 7, 8,
+    8, 7, 7, 7, 7,
+    7, 7, 7, 7, 8,
     8, 9, 9, 10, 10,
     11, 11, 12, 12, 13,
     13, 14, 14, 15, 16,
@@ -80,14 +73,16 @@ volatile int arr180[100] = {
      17, 16, 16, 15, 15,
      14, 14, 13, 13, 12,
      12, 11, 11, 10, 10,
-     9, 8, 7, 7, 7,
+     9, 8, 10, 7, 7,
+     7, 7, 7, 7, 7,
+     7, 7, 7, 7, 7,
+     7, 7, 7, 7, 7,
      6, 6, 6, 6, 6,
      6, 6, 6, 6, 6,
-     6, 6, 6, 6, 6,
-     6, 6, 6, 6, 6,
-     6, 6, 6, 6, 6,
-     6, 6, 6, 6, 6,
-     6, 6, 7, 7, 8,
+     7, 7, 7, 7, 7,
+     7, 7, 7, 7, 7,
+     7, 7, 7, 7, 7,
+     7, 7, 7, 7, 8,
      8, 9, 9, 10, 10,
      11, 11, 12, 12, 13,
      13, 14, 14, 15, 15,
@@ -111,9 +106,6 @@ void findBlack();
 void nTurn(int n, int direction);
 void classify();
 void rotateDish(int next_bin); 
-void stepper_update();
-void nTurn_start(int n, int direction);
-void rotateDish_start(int next_bin);
 
 typedef enum {
     WHITE = 0,
@@ -186,21 +178,22 @@ int main(){
 	// sets the Global Enable for all interrupts ==========================
 	sei();
 
-    // while(1){
-    // Spin Motor
-    // nTurn(50, 1); //Turn 90 degrees clockwise
-    // mTimer(2000);
-    // nTurn(100, 1); //Turn 180 degrees clockwise
-    // mTimer(2000);
+    nTurn(100,1);
+	findBlack();
 
-    // nTurn(50, -1); //Turn 60 degrees counter clockwise
-    // mTimer(2000);
-    // nTurn(100, -1); //Turn 180 degrees counter clockwise
-    // mTimer(2000);
+    // while(1){
+	// 	//Spin Motor
+	// 	// nTurn(50, 1); //Turn 90 degrees clockwise
+	// 	// mTimer(100);
+	// 	// nTurn(50, -1); //Turn 90 degrees clockwise
+	// 	// mTimer(100);
+
+    //     nTurn(100, 1); //Turn 180 degrees clockwise
+    //     mTimer(100);
+    //     // nTurn(100, -1); //Turn 180 degrees counter clockwise
+    //     // mTimer(100);
     // }
     
-	
-	findBlack();
 	while(!foundBlack){
 		; // Wait until hall effect sensor finds black
 	}
@@ -209,6 +202,9 @@ int main(){
 	PORTB = 0b00001110; // Start clockwise
 
 	calibration();
+    optical = 0;               // clear stale flag from last calibration pass
+    EIFR |= _BV(INTF3);        // clear any pending INT3 interrupt flag
+    EIMSK |= _BV(INT3);        // enable INT3 for normal operation
 	// Display results
 	mTimer(5000);
     LCDClear();
@@ -221,8 +217,6 @@ int main(){
     EICRA |=  _BV(ISC21);
     
     while(1){
-
-        stepper_update(); // Update stepper motor if active
 
         if(killswitch == 1){
             //disable adc interupt
@@ -244,57 +238,98 @@ int main(){
         }
     }
 		
-		// Only process end_gate when stepper is done and not classifying
-        if (end_gate_counter > 0 && !classifying && !stepper_active) {
+		if(end_gate_counter > 0 && !classifying){
+            // Safely decrement the counter
             cli();
             uint8_t local_count = end_gate_counter;
-            if (local_count > 0) end_gate_counter--;
+            if (local_count > 0) {
+                end_gate_counter--;
+            }
             sei();
-            
+
             if (local_count > 0) {
                 PORTB = 0x0F; // Brake
-                
+
                 link *item = NULL;
+
                 cli();
                 dequeue(&head, &item, &tail);
+                // Read codes for debug (optional)
+                uint8_t qcount = 0;
+                uint8_t qcodes[8] = {0};
+                link *iter = head;
+                while (iter != NULL && qcount < 8) {
+                    qcodes[qcount++] = (uint8_t)iter->e.itemCode;
+                    iter = iter->next;
+                }
                 sei();
-                
+
+                LCDClear();
+                LCDWriteStringXY(0,0,"Qsz:");
+                LCDWriteIntXY(4,0, size(&head,&tail),3);
+                LCDWriteStringXY(0,1,"Items:");
+                for (uint8_t k = 0; k < qcount; k++) {
+                    LCDWriteIntXY(7 + (k*3),1, qcodes[k],1);
+                }
+
                 if (item != NULL) {
                     int next_bin = (int)(item->e.itemCode);
-                    rotateDish_start(next_bin);
+                    rotateDish(next_bin);
                     free(item);
                 }
-                
-                PORTB = 0b00001110; // Resume
+
+                PORTB = 0b00001110; // Resume clockwise
+                mTimer(125);
+                EIFR  |= _BV(INTF2);   // clear any pending flag
             }
         }
 
-		if(optical){
-			optical = 0;
+		if(optical > 0 && !classifying){
+			cli();
+            optical--;
+            sei();
 			classify();
 		}
 
         if (pause) {
+            // debounce a bit then handle toggle
+            mTimer(50);
+            int itemCount = 0;
 
-            int pauseCount = 0;
+            if (pauseCount == 0) {
+                // go to paused state (brake)
+                PORTB = 0x0F;
 
-            mTimer(20); // debounce delay
-            if (PIND & _BV(PD1)) { // still pressed
-                PORTB = 0x0F; // Brake
-                // Wait until button is released
-                while (PIND & _BV(PD1));
-				mTimer(20);
-
-                // Display queue summary on LCD
-                LCDClear();
-                LCDWriteStringXY(0,0,"Items: ");
-                while(newLink != NULL){
-                    LCDWriteIntXY(0,pauseCount,newLink->e.itemCode,1);
-                    pauseCount++;
+                link* iter = head;
+                while(iter != NULL){
+                    itemCount++;
+                    iter = iter -> next;
                 }
-                
+
+                LCDClear();
+                LCDWriteStringXY(0,0,"W");
+                LCDWriteIntXY(1,0,whiteVal,2);
+                LCDWriteStringXY(3,0,"B");
+                LCDWriteIntXY(4,0,blackVal,2);
+				
+				LCDWriteStringXY(7,0,"#");
+				LCDWriteIntXY(8,0,itemCount,2);
+
+                LCDWriteStringXY(0,1,"A");
+                LCDWriteIntXY(1,1,alumVal,2);
+                LCDWriteStringXY(3,1,"S");
+                LCDWriteIntXY(4,1,steelVal,2);
+
+                pauseCount = 1;
+            } else {
+                // resume clockwise
+                PORTB = 0b00001110;
+                pauseCount = 0;
             }
+
+            // clear the software pause flag and re-enable INT1 for next press
             pause = 0;
+            EIFR |= _BV(INTF1); // clear any pending INT1 flag
             EIMSK |= _BV(INT1); // re-enable INT1
         }
     }
@@ -398,9 +433,9 @@ void calibration(void){
     LCDWriteIntXY(3,1,calibrationValues[2],4);
     LCDWriteIntXY(8,1,calibrationValues[3],4);
 }
-/* void rotateDish(int next_bin) {
-    
-    int prev = curr_bin;                // remember starting bin
+
+
+void rotateDish(int next_bin) {
     int diff = next_bin - curr_bin;
 
     if (diff == 1 || diff == -3) {          // 90 CW
@@ -421,7 +456,7 @@ void calibration(void){
     if (disp == 3)  disp = -1;
     if (disp == -3) disp = 1;
 
-}*/
+}
 
 void classify() {
 
@@ -495,7 +530,7 @@ void classify() {
         // allocation failed
         LCDClear();
         LCDWriteStringXY(0,0,"Alloc fail");
-        mTimer(250);
+        mTimer(225);
     } else {
         newLink->e.itemCode = (uint8_t)best_class;
 
@@ -539,72 +574,6 @@ void findBlack(){
 
     // Found black, disable INT4
     EIMSK &= ~_BV(INT4);
-}
-
-void stepper_update() {
-    if (stepper_active != 1 || stepper_steps_remaining <= 0) {
-        stepper_active = 0;
-        return;
-    }
-    
-    uint16_t cur_time = TCNT3;
-    uint16_t delay_ms = stepper_arr[stepper_index];
-    
-    // Convert ms to timer ticks: 8MHz / 64 prescaler = 125 ticks/ms
-    uint16_t delay_ticks = delay_ms * 125;
-    
-    if ((uint16_t)(cur_time - stepper_last_time) >= delay_ticks) {
-        stepper_last_time = cur_time;
-        
-        // Step the motor
-        if (stepper_direction == 1) {
-            count++;
-            if (count > 3) count = 0;
-        } else {
-            count--;
-            if (count < 0) count = 3;
-        }
-        PORTA = stepperMotor[count];
-        
-        stepper_steps_remaining--;
-        stepper_index++;
-    }
-}
-
-// Start a non-blocking turn
-void nTurn_start(int n, int direction) {
-    stepper_steps_remaining = n;
-    stepper_direction = direction;
-    stepper_index = 0;
-    stepper_last_time = TCNT3;
-    
-    if (n == 50) {
-        stepper_arr = (int*)arr50;
-    } else {
-        stepper_arr = (int*)arr180;
-    }
-    
-    stepper_active = 1;
-}
-
-void rotateDish_start(int next_bin) {
-    int diff = next_bin - curr_bin;
-    
-    if (diff == 1 || diff == -3) {          // 90 CW
-        nTurn_start(50, -1);
-    } else if (diff == -1 || diff == 3) {   // 90 CCW
-        nTurn_start(50, 1);
-    } else if (abs(diff) == 2) {            // 180
-        nTurn_start(100, 1);
-    }
-    // else: no move needed, stepper_active stays 0
-    
-    curr_bin = next_bin;
-
-    // normalize diff for display: -1, 0, 1, 2
-    int disp = diff;
-    if (disp == 3)  disp = -1;
-    if (disp == -3) disp = 1;
 }
 
 // mTimer function
@@ -665,6 +634,7 @@ ISR(INT0_vect){ // Kill Switch
 ISR(INT1_vect){ // Pause Button
 	// Disable INT1 to avoid bounces triggering repeatedly
     EIMSK &= ~_BV(INT1);
+	EIFR |= _BV(INTF2);
     pause = 1;
 }
 
@@ -676,7 +646,7 @@ ISR(INT2_vect){ // ISR for end gate active low Pin 19
 ISR(INT3_vect) { // Trigger ADC conversion when object in optical sensor
     EIMSK &= ~_BV(INT3);   // disable INT3 to avoid retrigger/bounce
     EIFR  |= _BV(INTF3);   // clear any pending flag
-    optical = 1;    
+    optical++;    
 }
 
 ISR(INT4_vect){ // ISR for Hall Effect on PE4 Pin 2
