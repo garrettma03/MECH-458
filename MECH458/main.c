@@ -52,6 +52,14 @@ volatile int steelVal = 0;
 volatile int alumVal = 0;
 volatile int classifying = 0;
 
+// New stepper code using timer3
+volatile int stepper_active = 0;      // Is stepper currently moving?
+volatile int stepper_steps_remaining = 0;
+volatile int stepper_direction = 1;   // 1 = CW, -1 = CCW
+volatile int stepper_index = 0;       // Index into acceleration array
+volatile int *stepper_arr = NULL;     // Pointer to arr50 or arr180
+volatile uint16_t stepper_last_time = 0;
+
 // S-curve acceleration table (gentler)
 volatile int arr50[50] = {
     20, 20, 19, 18, 17,
@@ -103,6 +111,9 @@ void findBlack();
 void nTurn(int n, int direction);
 void classify();
 void rotateDish(int next_bin); 
+void stepper_update();
+void nTurn_start(int n, int direction);
+void rotateDish_start(int next_bin);
 
 typedef enum {
     WHITE = 0,
@@ -211,6 +222,8 @@ int main(){
     
     while(1){
 
+        stepper_update(); // Update stepper motor if active
+
         if(killswitch == 1){
             //disable adc interupt
             if(newLink == NULL){
@@ -231,47 +244,28 @@ int main(){
         }
     }
 		
-		if(end_gate_counter > 0 && !classifying){
-            // Safely decrement the counter
+		// Only process end_gate when stepper is done and not classifying
+        if (end_gate_counter > 0 && !classifying && !stepper_active) {
             cli();
             uint8_t local_count = end_gate_counter;
-            if (local_count > 0) {
-                end_gate_counter--;
-            }
+            if (local_count > 0) end_gate_counter--;
             sei();
-
+            
             if (local_count > 0) {
                 PORTB = 0x0F; // Brake
-
+                
                 link *item = NULL;
-
                 cli();
                 dequeue(&head, &item, &tail);
-                // Read codes for debug (optional)
-                uint8_t qcount = 0;
-                uint8_t qcodes[8] = {0};
-                link *iter = head;
-                while (iter != NULL && qcount < 8) {
-                    qcodes[qcount++] = (uint8_t)iter->e.itemCode;
-                    iter = iter->next;
-                }
                 sei();
-
-                LCDClear();
-                LCDWriteStringXY(0,0,"Qsz:");
-                LCDWriteIntXY(4,0, size(&head,&tail),3);
-                LCDWriteStringXY(0,1,"Items:");
-                for (uint8_t k = 0; k < qcount; k++) {
-                    LCDWriteIntXY(7 + (k*3),1, qcodes[k],1);
-                }
-
+                
                 if (item != NULL) {
                     int next_bin = (int)(item->e.itemCode);
-                    rotateDish(next_bin);
+                    rotateDish_start(next_bin);
                     free(item);
                 }
-
-                PORTB = 0b00001110; // Resume clockwise
+                
+                PORTB = 0b00001110; // Resume
             }
         }
 
@@ -404,9 +398,7 @@ void calibration(void){
     LCDWriteIntXY(3,1,calibrationValues[2],4);
     LCDWriteIntXY(8,1,calibrationValues[3],4);
 }
-
-
-void rotateDish(int next_bin) {
+/* void rotateDish(int next_bin) {
     
     int prev = curr_bin;                // remember starting bin
     int diff = next_bin - curr_bin;
@@ -429,7 +421,7 @@ void rotateDish(int next_bin) {
     if (disp == 3)  disp = -1;
     if (disp == -3) disp = 1;
 
-}
+}*/
 
 void classify() {
 
@@ -547,6 +539,72 @@ void findBlack(){
 
     // Found black, disable INT4
     EIMSK &= ~_BV(INT4);
+}
+
+void stepper_update() {
+    if (stepper_active != 1 || stepper_steps_remaining <= 0) {
+        stepper_active = 0;
+        return;
+    }
+    
+    uint16_t cur_time = TCNT3;
+    uint16_t delay_ms = stepper_arr[stepper_index];
+    
+    // Convert ms to timer ticks: 8MHz / 64 prescaler = 125 ticks/ms
+    uint16_t delay_ticks = delay_ms * 125;
+    
+    if ((uint16_t)(cur_time - stepper_last_time) >= delay_ticks) {
+        stepper_last_time = cur_time;
+        
+        // Step the motor
+        if (stepper_direction == 1) {
+            count++;
+            if (count > 3) count = 0;
+        } else {
+            count--;
+            if (count < 0) count = 3;
+        }
+        PORTA = stepperMotor[count];
+        
+        stepper_steps_remaining--;
+        stepper_index++;
+    }
+}
+
+// Start a non-blocking turn
+void nTurn_start(int n, int direction) {
+    stepper_steps_remaining = n;
+    stepper_direction = direction;
+    stepper_index = 0;
+    stepper_last_time = TCNT3;
+    
+    if (n == 50) {
+        stepper_arr = (int*)arr50;
+    } else {
+        stepper_arr = (int*)arr180;
+    }
+    
+    stepper_active = 1;
+}
+
+void rotateDish_start(int next_bin) {
+    int diff = next_bin - curr_bin;
+    
+    if (diff == 1 || diff == -3) {          // 90 CW
+        nTurn_start(50, -1);
+    } else if (diff == -1 || diff == 3) {   // 90 CCW
+        nTurn_start(50, 1);
+    } else if (abs(diff) == 2) {            // 180
+        nTurn_start(100, 1);
+    }
+    // else: no move needed, stepper_active stays 0
+    
+    curr_bin = next_bin;
+
+    // normalize diff for display: -1, 0, 1, 2
+    int disp = diff;
+    if (disp == 3)  disp = -1;
+    if (disp == -3) disp = 1;
 }
 
 // mTimer function
