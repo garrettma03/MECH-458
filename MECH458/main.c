@@ -31,13 +31,12 @@
 // define the global variables that can be used in every function ==========
 volatile unsigned int ADC_result;
 volatile unsigned int ADC_result_flag;
-volatile unsigned int dir = 1;
 volatile unsigned int killswitch = 0;
 volatile unsigned int pause = 0;
 volatile uint8_t high_byte = 0;
 volatile uint8_t low_byte = 0;
 volatile uint16_t calibrationValues[4] = {0,0,0,0};
-volatile uint8_t end_gate = 0;
+volatile uint8_t end_gate_counter = 0;
 volatile unsigned int cur_value = 1024;
 volatile int accSpeed = 20;
 volatile int count = 0;
@@ -51,6 +50,7 @@ volatile int whiteVal = 0;
 volatile int blackVal = 0;
 volatile int steelVal = 0;
 volatile int alumVal = 0;
+volatile int classifying = 0;
 
 // S-curve acceleration table (gentler)
 volatile int arr50[50] = {
@@ -134,6 +134,9 @@ int main(){
 	//Start PWM in the background
 	pwmSetup();
 
+    // Start timer 3 for stepper timing
+    TCCR3B |= 0x03; // clkI/O/64 (From prescaler)
+
 	// Init LCD
 	InitLCD(LS_BLINK);
 	LCDClear();
@@ -171,10 +174,6 @@ int main(){
 	
 	// sets the Global Enable for all interrupts ==========================
 	sei();
-	
-	//Motor implementation
-	dir = 1;
-	killswitch = 0;
 
     // while(1){
     // Spin Motor
@@ -232,45 +231,48 @@ int main(){
         }
     }
 		
-		if(end_gate){
-            end_gate = 0;
-            PORTB = 0x0F; // Brake
-
-            link *item = NULL;
-
-            // protect queue operation in case an ISR touches it
+		if(end_gate_counter > 0 && !classifying){
+            // Safely decrement the counter
             cli();
-            dequeue(&head, &item, &tail);
-
-            // Count items
-            uint8_t qcount = 0;
-            uint8_t qcodes[8] = {0};
-            link *iter = head;
-            while (iter != NULL) {
-                qcodes[qcount++] = (uint8_t)iter->e.itemCode;
-                iter = iter->next;
+            uint8_t local_count = end_gate_counter;
+            if (local_count > 0) {
+                end_gate_counter--;
             }
             sei();
 
-            // Display queue summary on LCD
-            LCDClear();
-            LCDWriteStringXY(0,0,"Qsz:");
-            LCDWriteIntXY(4,0, size(&head,&tail),3);
+            if (local_count > 0) {
+                PORTB = 0x0F; // Brake
 
-            LCDWriteStringXY(0,1,"Items:");
-            // show up to 4 of the copied codes on line 1 (each 1-2 chars)
-            for (uint8_t k = 0; k < qcount; k++) {
-                LCDWriteIntXY(7 + (k*3),1, qcodes[k],1);
-            }
+                link *item = NULL;
 
-            if (item != NULL) {
-                int next_bin = (int)(item->e.itemCode); // extract payload
-                rotateDish(next_bin);                    // rotate to the queued class
-                free(item);                              // remove node
-            } else {
-                // queue empty — nothing to do (or handle default)
+                cli();
+                dequeue(&head, &item, &tail);
+                // Read codes for debug (optional)
+                uint8_t qcount = 0;
+                uint8_t qcodes[8] = {0};
+                link *iter = head;
+                while (iter != NULL && qcount < 8) {
+                    qcodes[qcount++] = (uint8_t)iter->e.itemCode;
+                    iter = iter->next;
+                }
+                sei();
+
+                LCDClear();
+                LCDWriteStringXY(0,0,"Qsz:");
+                LCDWriteIntXY(4,0, size(&head,&tail),3);
+                LCDWriteStringXY(0,1,"Items:");
+                for (uint8_t k = 0; k < qcount; k++) {
+                    LCDWriteIntXY(7 + (k*3),1, qcodes[k],1);
+                }
+
+                if (item != NULL) {
+                    int next_bin = (int)(item->e.itemCode);
+                    rotateDish(next_bin);
+                    free(item);
+                }
+
+                PORTB = 0b00001110; // Resume clockwise
             }
-            PORTB = 0b00001110; // Resume clockwise
         }
 
 		if(optical){
@@ -307,8 +309,7 @@ int main(){
 }
 
 //nturn
-void nTurn(int n, int direction)
-{
+void nTurn(int n, int direction){
     if(n == 50){
         for (int i = 0; i < n; i++) {
             // ---------- STEP MOTOR ----------
@@ -435,6 +436,7 @@ void classify() {
     const uint8_t samples_per_pass = 30;
     uint16_t sample_min = 1024;
     uint8_t j;
+    classifying = 1;
 
     // Take several samples while the object is in front of the sensor
     for (j = 0; j < samples_per_pass; j++) {
@@ -524,6 +526,8 @@ void classify() {
     // LCDWriteStringXY(6,1, materialNames[best_class]);
     // mTimer(500);
 
+    classifying = 0;
+
 }
 
 void findBlack(){
@@ -600,14 +604,14 @@ ISR(INT0_vect){ // Kill Switch
 	killswitch = 1;
 }
 
-ISR(INT1_vect){ 
+ISR(INT1_vect){ // Pause Button
 	// Disable INT1 to avoid bounces triggering repeatedly
     EIMSK &= ~_BV(INT1);
     pause = 1;
 }
 
 ISR(INT2_vect){ // ISR for end gate active low Pin 19
-	end_gate = 1;
+	end_gate_counter++; // Keep track are queued to dequeue them
 }
 
 // Optical reflector interrupt
