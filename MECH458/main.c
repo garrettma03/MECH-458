@@ -52,6 +52,7 @@ volatile int steelVal = 0;
 volatile int alumVal = 0;
 volatile int classifying = 0;
 volatile int pauseCount = 0;
+volatile int enqueueOnce = 0;
 
 // S-curve acceleration table (gentler)
 volatile int arr50[50] = {
@@ -213,8 +214,7 @@ int main(){
 
     EIFR |= _BV(INTF2); // End Gate stuff
     EIMSK |= _BV(INT2);
-	EICRA &= ~_BV(ISC20);
-    EICRA |=  _BV(ISC21);
+    EICRA |=  _BV(ISC20); // Trigger on both edges
     
     while(1){
 
@@ -238,56 +238,62 @@ int main(){
         }
     }
 		
-		if(end_gate_counter > 0 && !classifying){
-            // Safely decrement the counter
+		//if(end_gate_counter > 0 && !classifying){
+        if(end_gate_counter == 1 && !classifying){
+            // // Safely decrement the counter
+            // cli();
+            // uint8_t local_count = end_gate_counter;
+            // if (local_count > 0) {
+            //     end_gate_counter--;
+            // }
+            // sei();
+
+            //if (local_count > 0) {
+            PORTB = 0x0F; // Brake
+
+            link *item = NULL;
+
             cli();
-            uint8_t local_count = end_gate_counter;
-            if (local_count > 0) {
-                end_gate_counter--;
+            dequeue(&head, &item, &tail);
+            // Read codes for debug (optional)
+            uint8_t qcount = 0;
+            uint8_t qcodes[8] = {0};
+            link *iter = head;
+            while (iter != NULL && qcount < 8) {
+                qcodes[qcount++] = (uint8_t)iter->e.itemCode;
+                iter = iter->next;
             }
             sei();
 
-            if (local_count > 0) {
-                PORTB = 0x0F; // Brake
-
-                link *item = NULL;
-
-                cli();
-                dequeue(&head, &item, &tail);
-                // Read codes for debug (optional)
-                uint8_t qcount = 0;
-                uint8_t qcodes[8] = {0};
-                link *iter = head;
-                while (iter != NULL && qcount < 8) {
-                    qcodes[qcount++] = (uint8_t)iter->e.itemCode;
-                    iter = iter->next;
-                }
-                sei();
-
-                LCDClear();
-                LCDWriteStringXY(0,0,"Qsz:");
-                LCDWriteIntXY(4,0, size(&head,&tail),3);
-                LCDWriteStringXY(0,1,"Items:");
-                for (uint8_t k = 0; k < qcount; k++) {
-                    LCDWriteIntXY(7 + (k*3),1, qcodes[k],1);
-                }
-
-                if (item != NULL) {
-                    int next_bin = (int)(item->e.itemCode);
-                    rotateDish(next_bin);
-                    free(item);
-                }
-
-                PORTB = 0b00001110; // Resume clockwise
-                mTimer(125);
-                EIFR  |= _BV(INTF2);   // clear any pending flag
+            LCDClear();
+            LCDWriteStringXY(0,0,"Qsz:");
+            LCDWriteIntXY(4,0, size(&head,&tail),3);
+            LCDWriteStringXY(0,1,"Items:");
+            for (uint8_t k = 0; k < qcount; k++) {
+                LCDWriteIntXY(7 + (k*3),1, qcodes[k],1);
             }
+
+            if (item != NULL) {
+                int next_bin = (int)(item->e.itemCode);
+                rotateDish(next_bin);
+                free(item);
+            }
+
+            end_gate_counter = 0; // reset the counter
+            if(!end_gate_counter){
+                PORTB = 0b00001110; // Resume clockwise
+            }
+            
+            mTimer(17);
+            EIFR  |= _BV(INTF2);   // clear any pending flag
+            //}
         }
 
 		if(optical > 0 && !classifying){
 			cli();
             optical--;
             sei();
+            enqueueOnce = 1;
 			classify();
 		}
 
@@ -536,7 +542,10 @@ void classify() {
 
         // Block interrupts during queue operation
         cli();
-        enqueue(&head, &tail, &newLink);
+        if(enqueueOnce){
+            enqueue(&head, &tail, &newLink);
+            enqueueOnce = 0;
+        }
         sei();
     }
 
@@ -639,7 +648,8 @@ ISR(INT1_vect){ // Pause Button
 }
 
 ISR(INT2_vect){ // ISR for end gate active low Pin 19
-	end_gate_counter++; // Keep track are queued to dequeue them
+	//end_gate_counter++; // Keep track are queued to dequeue them
+    end_gate_counter = 1;
 }
 
 // Optical reflector interrupt
