@@ -53,6 +53,8 @@ volatile int alumVal = 0;
 volatile int classifying = 0;
 volatile int pauseCount = 0;
 volatile int enqueueOnce = 0;
+volatile int exitH = 0;
+volatile int exitL = 1;
 
 // S-curve acceleration table (gentler)
 volatile int arr50[50] = {
@@ -158,9 +160,9 @@ int main(){
 
 	// config the external interrupt ======================================
 	EIMSK |= (_BV(INT0)); // Kill switch on PD0
-	EICRA |= (_BV(ISC01) | _BV(ISC00));
-	EIMSK |= (_BV(INT1)); // Change direction on PD1
-	EICRA |= (_BV(ISC11) | _BV(ISC10));
+	EICRA |= (_BV(ISC01) | _BV(ISC00)); // Rising edge interrupt
+	EIMSK |= (_BV(INT1)); // Pause on PD1
+	EICRA |= (_BV(ISC11) | _BV(ISC10)); // Rising edge interrupt
     EIMSK |= (_BV(INT3)); // Optical Reflector on PD2 Pin 19
 	EICRA |= (_BV(ISC31) | _BV(ISC30)); // rising edge interrupt
     EICRB |= _BV(ISC41) | _BV(ISC40);  // rising edge for INT4
@@ -199,7 +201,7 @@ int main(){
 		; // Wait until hall effect sensor finds black
 	}
 	
-	OCR0A = 200; // Maps ADC to duty cycle for the PWM
+	OCR0A = 180; // Maps ADC to duty cycle for the PWM
 	PORTB = 0b00001110; // Start clockwise
 
 	calibration();
@@ -220,8 +222,8 @@ int main(){
 
         if(killswitch == 1){
             //disable adc interupt
-            if(newLink == NULL){
-                mTimer(50);
+            if(size(&head,&tail) == 0){
+                mTimer(150);
                 PORTB = 0x0F;
                 LCDClear();
                 LCDWriteStringXY(0,0,"White");
@@ -233,29 +235,31 @@ int main(){
                 LCDWriteIntXY(5,1,alumVal,2);
                 LCDWriteStringXY(7,1,"Steel");
                 LCDWriteIntXY(13,1,steelVal,2);
-                mTimer(5000);
                 return 0;
         }
     }
 		
-		//if(end_gate_counter > 0 && !classifying){
-        if(end_gate_counter == 1 && !classifying){
-            // // Safely decrement the counter
-            // cli();
-            // uint8_t local_count = end_gate_counter;
-            // if (local_count > 0) {
-            //     end_gate_counter--;
-            // }
-            // sei();
+    if (end_gate_counter && !classifying) {
 
-            //if (local_count > 0) {
-            PORTB = 0x0F; // Brake
+        // Snapshot flags atomically
+        cli();
+        uint8_t exH = exitH;
+        uint8_t exL = exitL;
+        end_gate_counter = 0;
+        sei();
+
+        if (exH) {
+            // ---------- LOW edge: object ENTERS gate ----------
+            // Brake, dequeue ONE item, rotate dish, then resume belt
+
+            PORTB = 0x0F;   // brake while we sort
 
             link *item = NULL;
 
             cli();
             dequeue(&head, &item, &tail);
-            // Read codes for debug (optional)
+
+            // Debug: read queue state if you want
             uint8_t qcount = 0;
             uint8_t qcodes[8] = {0};
             link *iter = head;
@@ -279,15 +283,20 @@ int main(){
                 free(item);
             }
 
-            end_gate_counter = 0; // reset the counter
-            if(!end_gate_counter){
-                PORTB = 0b00001110; // Resume clockwise
-            }
-            
-            mTimer(17);
-            EIFR  |= _BV(INTF2);   // clear any pending flag
-            //}
+            // After sorting this item, ALWAYS resume belt
+            PORTB = 0b00001110;
+
+        } else if (exL) {
+            // ---------- HIGH edge: object LEAVES gate ----------
+            // Do NOT brake here; just make sure belt is running
+            PORTB = 0b00001110;
         }
+
+        mTimer(17);             // small mechanical settle / debounce
+        EIFR  |= _BV(INTF2);    // clear pending INT2 flag
+        EIMSK |= _BV(INT2);     // re-enable INT2 for next edge
+    }
+
 
 		if(optical > 0 && !classifying){
 			cli();
@@ -297,46 +306,45 @@ int main(){
 			classify();
 		}
 
-        if (pause) {
+        if (pause) {    
             // debounce a bit then handle toggle
-            mTimer(50);
+            mTimer(20);
             int itemCount = 0;
+            if(PIND & _BV(PD1)){
+                if (pauseCount == 0) {
+                    // go to paused state (brake)
+                    PORTB = 0x0F;
+                    link* iter = head;
+                    while(iter != NULL){
+                        itemCount++;
+                        iter = iter -> next;
+                    }
 
-            if (pauseCount == 0) {
-                // go to paused state (brake)
-                PORTB = 0x0F;
+                    LCDClear();
+                    LCDWriteStringXY(0,0,"W");
+                    LCDWriteIntXY(1,0,whiteVal,2);
+                    LCDWriteStringXY(3,0,"B");
+                    LCDWriteIntXY(4,0,blackVal,2);
+                    
+                    LCDWriteStringXY(7,0,"#");
+                    LCDWriteIntXY(8,0,itemCount,2);
 
-                link* iter = head;
-                while(iter != NULL){
-                    itemCount++;
-                    iter = iter -> next;
+                    LCDWriteStringXY(0,1,"A");
+                    LCDWriteIntXY(1,1,alumVal,2);
+                    LCDWriteStringXY(3,1,"S");
+                    LCDWriteIntXY(4,1,steelVal,2);
+
+                    pauseCount = 1;
+                } else {
+                    // resume clockwise
+                    PORTB = 0b00001110;
+                    pauseCount = 0;
                 }
-
-                LCDClear();
-                LCDWriteStringXY(0,0,"W");
-                LCDWriteIntXY(1,0,whiteVal,2);
-                LCDWriteStringXY(3,0,"B");
-                LCDWriteIntXY(4,0,blackVal,2);
-				
-				LCDWriteStringXY(7,0,"#");
-				LCDWriteIntXY(8,0,itemCount,2);
-
-                LCDWriteStringXY(0,1,"A");
-                LCDWriteIntXY(1,1,alumVal,2);
-                LCDWriteStringXY(3,1,"S");
-                LCDWriteIntXY(4,1,steelVal,2);
-
-                pauseCount = 1;
-            } else {
-                // resume clockwise
-                PORTB = 0b00001110;
-                pauseCount = 0;
             }
-
             // clear the software pause flag and re-enable INT1 for next press
             pause = 0;
             EIFR |= _BV(INTF1); // clear any pending INT1 flag
-            EIMSK |= _BV(INT1); // re-enable INT1
+			EIMSK |= _BV(INT1); // re-enable INT1
         }
     }
 
@@ -643,13 +651,25 @@ ISR(INT0_vect){ // Kill Switch
 ISR(INT1_vect){ // Pause Button
 	// Disable INT1 to avoid bounces triggering repeatedly
     EIMSK &= ~_BV(INT1);
-	EIFR |= _BV(INTF2);
     pause = 1;
 }
 
 ISR(INT2_vect){ // ISR for end gate active low Pin 19
 	//end_gate_counter++; // Keep track are queued to dequeue them
     end_gate_counter = 1;
+    // Handle one edge at a time: block more edges until main is done
+    EIMSK &= ~_BV(INT2);
+
+    // Look at the ACTUAL pin level to decide H vs L
+    if (PIND & _BV(PD2)) {
+        // Pin is HIGH now -> object leaving gate (exitL)
+        exitH = 0;
+        exitL = 1;
+    } else {
+        // Pin is LOW now -> object entering/in gate (exitH)
+        exitH = 1;
+        exitL = 0;
+    }
 }
 
 // Optical reflector interrupt
