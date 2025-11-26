@@ -36,7 +36,7 @@ volatile unsigned int pause = 0;
 volatile uint8_t high_byte = 0;
 volatile uint8_t low_byte = 0;
 volatile uint16_t calibrationValues[4] = {0,0,0,0};
-volatile uint8_t end_gate_counter = 0;
+volatile uint8_t end_gate_flag = 0;
 volatile unsigned int cur_value = 1024;
 volatile int accSpeed = 20;
 volatile int count = 0;
@@ -53,6 +53,10 @@ volatile int alumVal = 0;
 volatile int classifying = 0;
 volatile int pauseCount = 0;
 volatile int enqueueOnce = 0;
+volatile int exitH = 0;
+volatile int exitL = 0;
+volatile uint8_t timeValues[10] = {0,0,0,0,0,0,0,0,0,0};
+volatile uint8_t timeCount = 0;
 
 // S-curve acceleration table (gentler)
 volatile int arr50[50] = {
@@ -238,7 +242,7 @@ int main(){
         }
 		
 		//if(end_gate_counter > 0 && !classifying){
-        if(end_gate_counter == 1 && !classifying){
+        if(end_gate_flag == 1 && !classifying){
             // // Safely decrement the counter
             // cli();
             // uint8_t local_count = end_gate_counter;
@@ -250,41 +254,45 @@ int main(){
             //if (local_count > 0) {
             PORTB = 0x0F; // Brake
 
+            int exh = exitH;
+            int exl = exitL;
+
             link *item = NULL;
 
-            cli();
-            dequeue(&head, &item, &tail);
-            // Read codes for debug (optional)
-            uint8_t qcount = 0;
-            uint8_t qcodes[8] = {0};
-            link *iter = head;
-            while (iter != NULL && qcount < 8) {
-                qcodes[qcount++] = (uint8_t)iter->e.itemCode;
-                iter = iter->next;
-            }
-            sei();
+            if(exh){ // Something entered the end gate 
+                cli();
+                dequeue(&head, &item, &tail);
+                // Read codes for debug (optional)
+                uint8_t qcount = 0;
+                uint8_t qcodes[8] = {0};
+                link *iter = head;
+                while (iter != NULL && qcount < 8) {
+                    qcodes[qcount++] = (uint8_t)iter->e.itemCode;
+                    iter = iter->next;
+                }
+                sei();
 
-            LCDClear();
-            LCDWriteStringXY(0,0,"Qsz:");
-            LCDWriteIntXY(4,0, size(&head,&tail),3);
-            LCDWriteStringXY(0,1,"Items:");
-            for (uint8_t k = 0; k < qcount; k++) {
-                LCDWriteIntXY(7 + (k*3),1, qcodes[k],1);
-            }
+                LCDClear();
+                LCDWriteStringXY(0,0,"Qsz:");
+                LCDWriteIntXY(4,0, size(&head,&tail),3);
+                LCDWriteStringXY(0,1,"Items:");
+                for (uint8_t k = 0; k < qcount; k++) {
+                    LCDWriteIntXY(7 + (k*3),1, qcodes[k],1);
+                }
 
-            if (item != NULL) {
-                int next_bin = (int)(item->e.itemCode);
-                rotateDish(next_bin);
-                free(item);
-            }
-
-            end_gate_counter = 0; // reset the counter
-            if(!end_gate_counter){
+                if (item != NULL) {
+                    int next_bin = (int)(item->e.itemCode);
+                    rotateDish(next_bin);
+                    free(item);
+                }
                 PORTB = 0b00001110; // Resume clockwise
+            } else if(exl){ // Something left the gate
+                PORTB = 0b00001110; // Resume clockwise
+                //mTimer(50);
             }
-            
-            mTimer(17);
-            EIFR  |= _BV(INTF2);   // clear any pending flag
+            end_gate_flag = 0; // reset the flag
+            EIFR |= _BV(INTF2);   // clear any pending flag
+            EIMSK |= _BV(INT2);
             //}
         }
 
@@ -294,6 +302,7 @@ int main(){
             sei();
             enqueueOnce = 1;
 			classify();
+            timeCount++;
 		}
 
         if (pause) {
@@ -647,8 +656,21 @@ ISR(INT1_vect){ // Pause Button
 }
 
 ISR(INT2_vect){ // ISR for end gate active low Pin 19
-	//end_gate_counter++; // Keep track are queued to dequeue them
-    end_gate_counter = 1;
+	    // Handle one edge at a time: block more edges until main is done
+    EIMSK &= ~_BV(INT2);
+
+    end_gate_flag = 1;
+
+    // Look at the ACTUAL pin level to decide H vs L
+    if (PIND & _BV(PD2)) {
+        // Pin is HIGH now -> object leaving gate (exitL)
+        exitH = 0;
+        exitL = 1;
+    } else {
+        // Pin is LOW now -> object entering/in gate (exitH)
+        exitH = 1;
+        exitL = 0;
+    }
 }
 
 // Optical reflector interrupt
