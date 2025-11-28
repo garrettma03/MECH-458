@@ -41,7 +41,10 @@ volatile unsigned int cur_value = 1024;
 volatile int accSpeed = 20;
 volatile int count = 0;
 volatile unsigned int optical = 0;
-volatile int stepperMotor[4] = {0b110000, 0b000110, 0b101000, 0b000101}; //half step
+volatile int stepperMotor[4] = {0b110110, 0b101110, 0b101101, 0b110101}; //half step
+const int stepper_accel_time[6] = {28,14,10,9,8,8}; // time delays for acceleration
+const int stepper_decel_time[4] = {8,9,12,30}; // time delays for deceleration
+volatile int step_delay;
 volatile int curr_bin; // start on black
 int foundBlack = 0; // flag for hall effect sensor
 volatile int classify_busy = 0;
@@ -57,43 +60,45 @@ volatile int exitH = 0;
 volatile int exitL = 0;
 volatile uint8_t timeValues[10] = {0,0,0,0,0,0,0,0,0,0};
 volatile uint8_t timeCount = 0;
+volatile uint8_t currentlySpinning = 0;
+volatile uint16_t curTime = 0;
 
 // S-curve acceleration table (gentler)
-volatile int arr50[50] = {
-    20, 20, 19, 18, 17,
-    16, 15, 14, 14, 13,
-    13, 12, 12, 11, 11,
-    10, 10, 9, 9, 8,
-    8, 7, 7, 7, 7,
-    7, 7, 7, 7, 8,
-    8, 9, 9, 10, 10,
-    11, 11, 12, 12, 13,
-    13, 14, 14, 15, 16,
-    17, 18, 19, 20, 20
-};
+// volatile int arr50[50] = {
+//     20, 20, 19, 18, 17,
+//     16, 15, 14, 14, 13,
+//     13, 12, 12, 11, 11,
+//     10, 10, 9, 9, 8,
+//     8, 7, 7, 7, 7,
+//     7, 7, 7, 7, 8,
+//     8, 9, 9, 10, 10,
+//     11, 11, 12, 12, 13,
+//     13, 14, 14, 15, 16,
+//     17, 18, 19, 20, 20
+// };
 
-volatile int arr180[100] = {
-     20, 20, 19, 19, 19,
-     18, 18, 18, 17, 17,
-     17, 16, 16, 15, 15,
-     14, 14, 13, 13, 12,
-     12, 11, 11, 10, 10,
-     9, 8, 10, 7, 7,
-     7, 7, 7, 7, 7,
-     7, 7, 7, 7, 7,
-     7, 7, 7, 7, 7,
-     6, 6, 6, 6, 6,
-     6, 6, 6, 6, 6,
-     7, 7, 7, 7, 7,
-     7, 7, 7, 7, 7,
-     7, 7, 7, 7, 7,
-     7, 7, 7, 7, 8,
-     8, 9, 9, 10, 10,
-     11, 11, 12, 12, 13,
-     13, 14, 14, 15, 15,
-     16, 16, 17, 17, 18,
-     18, 19, 19, 20, 20
- };
+// volatile int arr180[100] = {
+//      20, 20, 19, 19, 19,
+//      18, 18, 18, 17, 17,
+//      17, 16, 16, 15, 15,
+//      14, 14, 13, 13, 12,
+//      12, 11, 11, 10, 10,
+//      9, 8, 10, 7, 7,
+//      7, 7, 7, 7, 7,
+//      7, 7, 7, 7, 7,
+//      7, 7, 7, 7, 7,
+//      6, 6, 6, 6, 6,
+//      6, 6, 6, 6, 6,
+//      7, 7, 7, 7, 7,
+//      7, 7, 7, 7, 7,
+//      7, 7, 7, 7, 7,
+//      7, 7, 7, 7, 8,
+//      8, 9, 9, 10, 10,
+//      11, 11, 12, 12, 13,
+//      13, 14, 14, 15, 15,
+//      16, 16, 17, 17, 18,
+//      18, 19, 19, 20, 20
+//  };
 
 // Pointer
 link *head; /* The ptr to the head of the queue */
@@ -142,9 +147,6 @@ int main(){
 	//Start PWM in the background
 	pwmSetup();
 
-    // Start timer 3 for stepper timing
-    TCCR3B |= 0x03; // clkI/O/64 (From prescaler)
-
 	// Init LCD
 	InitLCD(LS_BLINK);
 	LCDClear();
@@ -188,22 +190,22 @@ int main(){
 
     // while(1){
 	// 	//Spin Motor
-	// 	// nTurn(50, 1); //Turn 90 degrees clockwise
-	// 	// mTimer(100);
-	// 	// nTurn(50, -1); //Turn 90 degrees clockwise
-	// 	// mTimer(100);
+	// 	nTurn(50, 1); //Turn 90 degrees clockwise
+	// 	mTimer(500);
+	// 	nTurn(50, -1); //Turn 90 degrees clockwise
+	// 	mTimer(500);
 
     //     nTurn(100, 1); //Turn 180 degrees clockwise
-    //     mTimer(100);
-    //     // nTurn(100, -1); //Turn 180 degrees counter clockwise
-    //     // mTimer(100);
+    //     mTimer(500);
+    //     nTurn(100, -1); //Turn 180 degrees counter clockwise
+    //     mTimer(500);
     // }
     
 	while(!foundBlack){
 		; // Wait until hall effect sensor finds black
 	}
 	
-	OCR0A = 200; // Maps ADC to duty cycle for the PWM
+	OCR0A = 210; // Maps ADC to duty cycle for the PWM
 	PORTB = 0b00001110; // Start clockwise
 
 	calibration();
@@ -259,7 +261,7 @@ int main(){
 
             link *item = NULL;
 
-            if(exh){ // Something entered the end gate 
+            if(exh && !currentlySpinning){ // Something entered the end gate 
                 cli();
                 dequeue(&head, &item, &tail);
                 // Read codes for debug (optional)
@@ -309,36 +311,40 @@ int main(){
             // debounce a bit then handle toggle
             mTimer(50);
             int itemCount = 0;
+            if (PIND & _BV(PD1)) { // still pressed
+                if (pauseCount == 0) {
+                    // go to paused state (brake)
+                    PORTB = 0x0F;
 
-            if (pauseCount == 0) {
-                // go to paused state (brake)
-                PORTB = 0x0F;
+                    link* iter = head;
+                    while(iter != NULL){
+                        itemCount++;
+                        iter = iter -> next;
+                    }
 
-                link* iter = head;
-                while(iter != NULL){
-                    itemCount++;
-                    iter = iter -> next;
+                    LCDClear();
+                    LCDWriteStringXY(0,0,"W");
+                    LCDWriteIntXY(1,0,whiteVal,2);
+                    LCDWriteStringXY(3,0,"B");
+                    LCDWriteIntXY(4,0,blackVal,2);
+                    
+                    LCDWriteStringXY(7,0,"#");
+                    LCDWriteIntXY(8,0,itemCount,2);
+
+                    LCDWriteStringXY(0,1,"A");
+                    LCDWriteIntXY(1,1,alumVal,2);
+                    LCDWriteStringXY(3,1,"S");
+                    LCDWriteIntXY(4,1,steelVal,2);
+
+                    pauseCount = 1;
+                } else {
+                    // resume clockwise
+                    PORTB = 0b00001110;
+                    pauseCount = 0;
                 }
-
-                LCDClear();
-                LCDWriteStringXY(0,0,"W");
-                LCDWriteIntXY(1,0,whiteVal,2);
-                LCDWriteStringXY(3,0,"B");
-                LCDWriteIntXY(4,0,blackVal,2);
-				
-				LCDWriteStringXY(7,0,"#");
-				LCDWriteIntXY(8,0,itemCount,2);
-
-                LCDWriteStringXY(0,1,"A");
-                LCDWriteIntXY(1,1,alumVal,2);
-                LCDWriteStringXY(3,1,"S");
-                LCDWriteIntXY(4,1,steelVal,2);
-
-                pauseCount = 1;
-            } else {
-                // resume clockwise
-                PORTB = 0b00001110;
-                pauseCount = 0;
+                // Wait until button is released
+                while (PIND & _BV(PD1));
+				mTimer(20);
             }
 
             // clear the software pause flag and re-enable INT1 for next press
@@ -353,36 +359,36 @@ int main(){
 
 //nturn
 void nTurn(int n, int direction){
-    if(n == 50){
-        for (int i = 0; i < n; i++) {
-            // ---------- STEP MOTOR ----------
-            if (direction == 1) {
-                count++;
-                if (count > 3) count = 0;
-                PORTA = stepperMotor[count];
-                mTimer(arr50[i]);
-            } else {
-                count--;
-                if (count < 0) count = 3;
-                PORTA = stepperMotor[count];
-                mTimer(arr50[i]);
-            }
-        }
-
-        }else{
-
-        for (int i = 0; i < n; i++) {
-            if (direction == 1) {
-                count++;
-                if (count > 3) count = 0;
-                PORTA = stepperMotor[count];
-                mTimer(arr180[i]);
-            } else {
-                count--;
-                if (count < 0) count = 3;
-                PORTA = stepperMotor[count];
-                mTimer(arr180[i]);
-            }
+    int last_steps = n - 4;
+    int k = 0; // index for decel time array
+    for (int i = 0; i < n; i++) {
+        // ---------- STEP MOTOR ----------
+        if (direction == 1) {
+            count++;
+            if (count > 3) count = 0;
+            PORTA = stepperMotor[count];
+                if(i < 6){
+                step_delay = stepper_accel_time[i];
+                }else if(i >= last_steps){
+                    step_delay = stepper_decel_time[k];
+                    k++;
+                }else{
+                    step_delay = 8; // delay between steps on the top trapezoid
+                }
+            mTimer(step_delay);
+        } else {
+            count--;
+            if (count < 0) count = 3;
+            PORTA = stepperMotor[count];
+            if(i < 6){
+                step_delay = stepper_accel_time[i];
+                }else if(i >= last_steps){
+                    step_delay = stepper_decel_time[k];
+                    k++;
+                }else{
+                    step_delay = 8; // delay between steps on the top trapezoid
+                }
+            mTimer(step_delay);
         }
     }
 }
@@ -451,6 +457,7 @@ void calibration(void){
 
 void rotateDish(int next_bin) {
     int diff = next_bin - curr_bin;
+    currentlySpinning = 1;
 
     if (diff == 1 || diff == -3) {          // 90 CW
         nTurn(50, -1);
@@ -469,6 +476,8 @@ void rotateDish(int next_bin) {
     int disp = diff;
     if (disp == 3)  disp = -1;
     if (disp == -3) disp = 1;
+
+    currentlySpinning = 0;
 
 }
 
@@ -651,7 +660,7 @@ ISR(INT0_vect){ // Kill Switch
 ISR(INT1_vect){ // Pause Button
 	// Disable INT1 to avoid bounces triggering repeatedly
     EIMSK &= ~_BV(INT1);
-	EIFR |= _BV(INTF2);
+	EIFR |= _BV(INTF1);
     pause = 1;
 }
 
