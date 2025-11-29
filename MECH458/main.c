@@ -38,7 +38,6 @@ volatile uint8_t low_byte = 0;
 volatile uint16_t calibrationValues[4] = {0,0,0,0};
 volatile uint8_t end_gate_flag = 0;
 volatile unsigned int cur_value = 1024;
-volatile int accSpeed = 20;
 volatile int count = 0;
 volatile unsigned int optical = 0;
 volatile int stepperMotor[4] = {0b110110, 0b101110, 0b101101, 0b110101}; //half step
@@ -47,8 +46,6 @@ const int stepper_decel_time[4] = {8,9,12,30}; // time delays for deceleration
 volatile int step_delay;
 volatile int curr_bin; // start on black
 int foundBlack = 0; // flag for hall effect sensor
-volatile int classify_busy = 0;
-volatile int isEndGate = 0;
 volatile int whiteVal = 0;
 volatile int blackVal = 0;
 volatile int steelVal = 0;
@@ -61,7 +58,11 @@ volatile int exitL = 0;
 volatile uint8_t timeValues[10] = {0,0,0,0,0,0,0,0,0,0};
 volatile uint8_t timeCount = 0;
 volatile uint8_t currentlySpinning = 0;
-volatile uint16_t curTime = 0;
+volatile uint16_t sample_min = 1024;
+volatile uint8_t sample_active = 0;      // "we are currently over a part"
+volatile uint8_t classify_pending = 0;   // "we have a finished part to classify"
+volatile uint16_t last_sample_min = 0;   // latched min for the last part
+
 
 // S-curve acceleration table (gentler)
 // volatile int arr50[50] = {
@@ -114,7 +115,7 @@ void pwmSetup();
 void calibration(void);
 void findBlack();
 void nTurn(int n, int direction);
-void classify();
+void classify(uint16_t sample_min_val);
 void rotateDish(int next_bin); 
 
 typedef enum {
@@ -176,12 +177,12 @@ int main(){
 	// by default, the ADC input (analog input is set to be ADC0 / PORTF0
 	ADCSRA |= _BV(ADEN); // enable ADC
 	ADCSRA |= _BV(ADIE); // enable interrupt of ADC
-	ADMUX |= _BV(REFS0); // ADLAR sets the upper 2 bits of ADCL
-									  // to be the lower 2 of bits of the now 10-bit ADCH
-									  // REFS0 is bit 6 of the ADMUX register and sets
-									  // AVCC with external capacitor at AREF pin
+	ADMUX |= _BV(REFS0); // REFS0 is bit 6 of the ADMUX register and sets
+						 // AVCC with external capacitor at AREF pin
 	ADCSRA |= 0x04; // set ADC prescaler = 16 (~488 kHz)
-	
+	ADCSRA |= _BV(ADATE); // Enable auto trigger
+    ADCSRA |= _BV(ADSC); // Start one conversion at the beginning
+
 	// sets the Global Enable for all interrupts ==========================
 	sei();
 
@@ -298,14 +299,20 @@ int main(){
             //}
         }
 
-		if(optical > 0 && !classifying){
-			cli();
-            optical--;
+        if (classify_pending && !classifying) {
+            classify_pending = 0;
+            classifying = 1;
+
+            uint16_t value;
+            cli();
+            value = last_sample_min;   // atomic copy
             sei();
+
             enqueueOnce = 1;
-			classify();
-            timeCount++;
-		}
+            classify(value);
+
+            classifying = 0;
+        }
 
         if (pause) {
             // debounce a bit then handle toggle
@@ -403,7 +410,6 @@ void calibration(void){
 
     for (i = 0; i < 4; i++) {
         cur_value = 1024;
-        ADCSRA &= ~_BV(ADATE);   // one-shot ADC
 
         // Prepare for a NEW optical event 
         optical = 0;             // clear software flag
@@ -421,7 +427,6 @@ void calibration(void){
 
         // --- take ADC samples and find min ---
         for (j = 0; j < samples_per_pass; j++) {
-            ADCSRA |= _BV(ADSC);        // start conversion
             while (!ADC_result_flag) {
                 ; // wait for ADC ISR
             }
@@ -481,105 +486,47 @@ void rotateDish(int next_bin) {
 
 }
 
-void classify() {
+void classify(uint16_t sample_min_val) {
 
-    const uint8_t samples_per_pass = 30;
-    uint16_t sample_min = 1024;
-    uint8_t j;
-    classifying = 1;
-
-    // Take several samples while the object is in front of the sensor
-    for (j = 0; j < samples_per_pass; j++) {
-        // Start single conversion
-        ADCSRA |= _BV(ADSC);
-
-        // Wait for ADC ISR to set the flag
-        while (!ADC_result_flag) {
-            ; // Wait for flag to be risen
-        }
-
-        // Copy and clear flag atomically
-        cli();
-        uint16_t sample = ADC_result;
-        ADC_result_flag = 0;
-        sei();
-
-        if (sample < sample_min) {
-            sample_min = sample;
-        }
-
-        mTimer(2);  // small delay between samples
-    }
-
-    // Nearest calibration value
+    // Nearest calibration value (unchanged logic)
     uint8_t best_class = 0;
     uint16_t best_diff = 1024;
 
     for (uint8_t i = 0; i < 4; i++) {
         uint16_t calib = calibrationValues[i];
-        uint16_t diff;
+        uint16_t diff = (sample_min_val > calib) ?
+                        (sample_min_val - calib) :
+                        (calib - sample_min_val);
 
-        // Calculate absolute difference
-        if (sample_min > calib) {
-            diff = sample_min - calib;
-        } else {
-            diff = calib - sample_min;
-        }
-
-        // If this is the smallest difference so far, store it
         if (diff < best_diff) {
             best_diff = diff;
             best_class = i;
         }
     }
 
-    if(best_class == 0){
-        whiteVal++;
-    }
-    if(best_class == 1){
-        alumVal++;
-    } 
-    if(best_class == 2){
-        blackVal++;
-    } 
-    if(best_class == 3){
-        steelVal++;
-    }
+    // update counts
+    if(best_class == 0) whiteVal++;
+    if(best_class == 1) alumVal++;
+    if(best_class == 2) blackVal++;
+    if(best_class == 3) steelVal++;
 
-    // Enqueue classification result using LinkedQueue
+    // enqueue result
     link *newLink = NULL;
-    initLink(&newLink);                 // allocate and initialize a new link
+    initLink(&newLink);
     if (newLink == NULL) {
-        // allocation failed
         LCDClear();
         LCDWriteStringXY(0,0,"Alloc fail");
         mTimer(225);
     } else {
         newLink->e.itemCode = (uint8_t)best_class;
 
-        // Block interrupts during queue operation
         cli();
-        if(enqueueOnce){
+        if (enqueueOnce) {
             enqueue(&head, &tail, &newLink);
             enqueueOnce = 0;
         }
         sei();
     }
-
-    // Re-arm optical interrupt for next object
-    EIFR |= _BV(INTF3);     // clear any pending flag
-    EIMSK |= _BV(INT3);     // enable INT3 again
-
-    // // Debug output
-    // LCDClear();
-    // LCDWriteStringXY(0,0,"Val:");
-    // LCDWriteIntXY(4,0,sample_min,4);
-
-    // LCDWriteStringXY(0,1,"Class:");
-    // LCDWriteStringXY(6,1, materialNames[best_class]);
-    // mTimer(500);
-
-    classifying = 0;
 
 }
 
@@ -684,9 +631,22 @@ ISR(INT2_vect){ // ISR for end gate active low Pin 19
 
 // Optical reflector interrupt
 ISR(INT3_vect) { // Trigger ADC conversion when object in optical sensor
-    EIMSK &= ~_BV(INT3);   // disable INT3 to avoid retrigger/bounce
-    EIFR  |= _BV(INTF3);   // clear any pending flag
-    optical++;    
+    static uint8_t edge_state = 0;
+
+    if (edge_state == 0) {
+        // First edge: object just arrived at sensor
+        sample_active = 1;
+        sample_min = 1024;
+        edge_state = 1;
+    } else {
+        // Second edge: object has just left sensor
+        sample_active = 0;
+        last_sample_min = sample_min;
+        classify_pending = 1;    // tell main loop to classify
+        edge_state = 0;
+    }
+
+    EIFR  |= _BV(INTF3);   // clear flag  
 }
 
 ISR(INT4_vect){ // ISR for Hall Effect on PE4 Pin 2
@@ -700,5 +660,11 @@ ISR(ADC_vect) {
 	low_byte = ADCL;
     high_byte = ADCH;
 	ADC_result = (high_byte << 8) | low_byte; // combine ADCH and ADCL for full 10-bit value
+        // While an object is in the optical sensor, track the minimum
+    if (sample_active) {
+        if (ADC_result < sample_min) {
+            sample_min = ADC_result;
+        }
+    }
 	ADC_result_flag = 1;
 }
