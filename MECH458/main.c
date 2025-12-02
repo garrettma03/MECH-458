@@ -38,14 +38,17 @@ volatile uint8_t low_byte = 0;
 volatile uint16_t calibrationValues[4] = {0,0,0,0};
 volatile uint8_t end_gate_flag = 0;
 volatile unsigned int cur_value = 1024;
+volatile int accSpeed = 20;
 volatile int count = 0;
 volatile unsigned int optical = 0;
 volatile int stepperMotor[4] = {0b110110, 0b101110, 0b101101, 0b110101}; //half step
-const int stepper_accel_time[6] = {28,14,10,9,8,8}; // time delays for acceleration
+const int stepper_accel_time[6] = {24,14,10,9,8,8}; // time delays for acceleration
 const int stepper_decel_time[4] = {8,9,12,30}; // time delays for deceleration
 volatile int step_delay;
 volatile int curr_bin; // start on black
 int foundBlack = 0; // flag for hall effect sensor
+volatile int classify_busy = 0;
+volatile int isEndGate = 0;
 volatile int whiteVal = 0;
 volatile int blackVal = 0;
 volatile int steelVal = 0;
@@ -55,9 +58,10 @@ volatile int pauseCount = 0;
 volatile int enqueueOnce = 0;
 volatile int exitH = 0;
 volatile int exitL = 0;
-volatile uint8_t timeValues[10] = {0,0,0,0,0,0,0,0,0,0};
-volatile uint8_t timeCount = 0;
 volatile uint8_t currentlySpinning = 0;
+volatile uint8_t killswitchLatched = 0;
+volatile uint32_t t3_ms = 0;
+uint32_t killswitchStartMs = 0;
 
 // S-curve acceleration table (gentler)
 // volatile int arr50[50] = {
@@ -200,8 +204,26 @@ int main(){
 	while(!foundBlack){
 		; // Wait until hall effect sensor finds black
 	}
+
+    // --- Timer3: 1 ms tick for global timebase ---
+    TCCR3A = 0;
+    TCCR3B = 0;
+    TCNT3  = 0;
+
+    // CTC mode with OCR3A as TOP
+    TCCR3B |= (1 << WGM32);
+
+    // prescaler /64: 16MHz / 64 = 250kHz → 4us per tick
+    // we want 1ms → 1ms / 4us = 250 ticks → OCR3A = 249
+    OCR3A = 249;
+
+    // enable compare match A interrupt
+    TIMSK3 |= (1 << OCIE3A);
+
+    // start timer with /64 prescaler
+    TCCR3B |= (1 << CS31) | (1 << CS30);
 	
-	OCR0A = 210; // Maps ADC to duty cycle for the PWM
+	OCR0A = 130; // Maps ADC to duty cycle for the PWM
 	PORTB = 0b00001110; // Start clockwise
 
 	calibration();
@@ -220,11 +242,16 @@ int main(){
     
     while(1){
 
-        if(killswitch == 1){
-            //disable adc interupt
-            if(size(&head,&tail) == 0){
-                mTimer(150);
+        if (killswitchLatched) {
+            uint32_t elapsed = t3_ms - killswitchStartMs;
+
+            if (elapsed >= 3000 && (size(&head,&tail) == 0)) {   // 8 seconds
+                mTimer(500); // Let the next item fall into the dish
+
+                // stop belt
                 PORTB = 0x0F;
+
+                // final display
                 LCDClear();
                 LCDWriteStringXY(0,0,"White");
                 LCDWriteIntXY(5,0,whiteVal,2);
@@ -235,8 +262,20 @@ int main(){
                 LCDWriteIntXY(5,1,alumVal,2);
                 LCDWriteStringXY(7,1,"Steel");
                 LCDWriteIntXY(13,1,steelVal,2);
-                return 0;
+				
+				return 0; // End program here
             }
+        }
+
+        // --- Killswitch timing using t3_ms ---
+        if (!killswitchLatched && killswitch == 1) {
+            killswitchLatched  = 1;
+            killswitchStartMs  = t3_ms;
+
+            // OPTIONAL: display that shutdown window has started
+            LCDClear();
+            LCDWriteStringXY(0,0,"Killswitch");
+            LCDWriteStringXY(0,1,"Flushing...");
         }
 		
 		//if(end_gate_counter > 0 && !classifying){
@@ -286,7 +325,7 @@ int main(){
                 PORTB = 0b00001110; // Resume clockwise
             } else if(exl){ // Something left the gate
                 PORTB = 0b00001110; // Resume clockwise
-                //mTimer(50);
+                mTimer(10);
             }
             end_gate_flag = 0; // reset the flag
             EIFR |= _BV(INTF2);   // clear any pending flag
@@ -300,7 +339,6 @@ int main(){
             sei();
             enqueueOnce = 1;
 			classify();
-            timeCount++;
 		}
 
         if (pause) {
@@ -369,7 +407,7 @@ void nTurn(int n, int direction){
                     step_delay = stepper_decel_time[k];
                     k++;
                 }else{
-                    step_delay = 8; // delay between steps on the top trapezoid
+                    step_delay = 7; // delay between steps on the top trapezoid
                 }
             mTimer(step_delay);
         } else {
@@ -382,7 +420,7 @@ void nTurn(int n, int direction){
                     step_delay = stepper_decel_time[k];
                     k++;
                 }else{
-                    step_delay = 8; // delay between steps on the top trapezoid
+                    step_delay = 7; // delay between steps on the top trapezoid
                 }
             mTimer(step_delay);
         }
@@ -454,7 +492,7 @@ void calibration(void){
 void rotateDish(int next_bin) {
     int diff = next_bin - curr_bin;
     currentlySpinning = 1;
-
+	mTimer(10);
     if (diff == 1 || diff == -3) {          // 90 CW
         nTurn(50, -1);
         curr_bin = next_bin;
@@ -479,7 +517,7 @@ void rotateDish(int next_bin) {
 
 void classify() {
 
-    const uint8_t samples_per_pass = 30;
+    const uint8_t samples_per_pass = 28;
     uint16_t sample_min = 1024;
     uint8_t j;
     classifying = 1;
@@ -663,7 +701,7 @@ ISR(INT1_vect){ // Pause Button
 ISR(INT2_vect){ // ISR for end gate active low Pin 19
 	    // Handle one edge at a time: block more edges until main is done
     EIMSK &= ~_BV(INT2);
-
+	PORTB = 0x0F;
     end_gate_flag = 1;
 
     // Look at the ACTUAL pin level to decide H vs L
@@ -697,4 +735,9 @@ ISR(ADC_vect) {
     high_byte = ADCH;
 	ADC_result = (high_byte << 8) | low_byte; // combine ADCH and ADCL for full 10-bit value
 	ADC_result_flag = 1;
+}
+
+// Timer3 Compare A interrupt for 1 ms tick
+ISR(TIMER3_COMPA_vect) {
+    t3_ms++;   // increments once per millisecond
 }
