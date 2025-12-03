@@ -35,14 +35,14 @@ volatile unsigned int killswitch = 0;
 volatile unsigned int pause = 0;
 volatile uint8_t high_byte = 0;
 volatile uint8_t low_byte = 0;
-volatile uint16_t calibrationValues[4] = {0,0,0,0};
+volatile uint16_t calibrationValues[4] = {910,30,980,425};
 volatile uint8_t end_gate_flag = 0;
 volatile unsigned int cur_value = 1024;
 volatile int accSpeed = 20;
 volatile int count = 0;
 volatile unsigned int optical = 0;
 volatile int stepperMotor[4] = {0b110110, 0b101110, 0b101101, 0b110101}; //half step
-const int stepper_accel_time[6] = {24,14,10,9,8,8}; // time delays for acceleration
+const int stepper_accel_time[8] = {39,39,24,14,10,9,8,8}; // time delays for acceleration
 const int stepper_decel_time[4] = {8,9,12,30}; // time delays for deceleration
 volatile int step_delay;
 volatile int curr_bin; // start on black
@@ -213,8 +213,8 @@ int main(){
     // CTC mode with OCR3A as TOP
     TCCR3B |= (1 << WGM32);
 
-    // prescaler /64: 16MHz / 64 = 250kHz → 4us per tick
-    // we want 1ms → 1ms / 4us = 250 ticks → OCR3A = 249
+    // prescaler /64: 16MHz / 64 = 250kHz ? 4us per tick
+    // we want 1ms ? 1ms / 4us = 250 ticks ? OCR3A = 249
     OCR3A = 249;
 
     // enable compare match A interrupt
@@ -226,12 +226,11 @@ int main(){
 	OCR0A = 130; // Maps ADC to duty cycle for the PWM
 	PORTB = 0b00001110; // Start clockwise
 
-	calibration();
+	//calibration();
     optical = 0;               // clear stale flag from last calibration pass
     EIFR |= _BV(INTF3);        // clear any pending INT3 interrupt flag
     EIMSK |= _BV(INT3);        // enable INT3 for normal operation
-	// Display results
-	mTimer(5000);
+
     LCDClear();
     LCDWriteStringXY(0,0,"GO!");
     curr_bin = BLACK;
@@ -299,29 +298,43 @@ int main(){
             if(exh && !currentlySpinning){ // Something entered the end gate 
                 cli();
                 dequeue(&head, &item, &tail);
-                // Read codes for debug (optional)
-                uint8_t qcount = 0;
-                uint8_t qcodes[8] = {0};
-                link *iter = head;
-                while (iter != NULL && qcount < 8) {
-                    qcodes[qcount++] = (uint8_t)iter->e.itemCode;
-                    iter = iter->next;
-                }
                 sei();
+                // // Read codes for debug (optional)
+                // uint8_t qcount = 0;
+                // uint8_t qcodes[8] = {0};
+                // link *iter = head;
+                // while (iter != NULL && qcount < 8) {
+                //     qcodes[qcount++] = (uint8_t)iter->e.itemCode;
+                //     iter = iter->next;
+                // }
+                // sei();
 
-                LCDClear();
-                LCDWriteStringXY(0,0,"Qsz:");
-                LCDWriteIntXY(4,0, size(&head,&tail),3);
-                LCDWriteStringXY(0,1,"Items:");
-                for (uint8_t k = 0; k < qcount; k++) {
-                    LCDWriteIntXY(7 + (k*3),1, qcodes[k],1);
-                }
+                // LCDClear();
+                // LCDWriteStringXY(0,0,"Qsz:");
+                // LCDWriteIntXY(4,0, size(&head,&tail),3);
+                // LCDWriteStringXY(0,1,"Items:");
+                // for (uint8_t k = 0; k < qcount; k++) {
+                //     LCDWriteIntXY(7 + (k*3),1, qcodes[k],1);
+                // }
 
                 if (item != NULL) {
                     int next_bin = (int)(item->e.itemCode);
                     rotateDish(next_bin);
                     free(item);
+                    if(next_bin == 0){
+                        whiteVal++;
+                    }
+                    if(next_bin == 1){
+                        alumVal++;
+                    } 
+                    if(next_bin == 2){
+                        blackVal++;
+                    } 
+                    if(next_bin == 3){
+                        steelVal++;
+                    }
                 }
+
                 PORTB = 0b00001110; // Resume clockwise
             } else if(exl){ // Something left the gate
                 PORTB = 0b00001110; // Resume clockwise
@@ -401,26 +414,26 @@ void nTurn(int n, int direction){
             count++;
             if (count > 3) count = 0;
             PORTA = stepperMotor[count];
-                if(i < 6){
+                if(i < 8){
                 step_delay = stepper_accel_time[i];
                 }else if(i >= last_steps){
                     step_delay = stepper_decel_time[k];
                     k++;
                 }else{
-                    step_delay = 7; // delay between steps on the top trapezoid
+                    step_delay = 8; // delay between steps on the top trapezoid
                 }
             mTimer(step_delay);
         } else {
             count--;
             if (count < 0) count = 3;
             PORTA = stepperMotor[count];
-            if(i < 6){
+            if(i < 8){
                 step_delay = stepper_accel_time[i];
                 }else if(i >= last_steps){
                     step_delay = stepper_decel_time[k];
                     k++;
                 }else{
-                    step_delay = 7; // delay between steps on the top trapezoid
+                    step_delay = 8; // delay between steps on the top trapezoid
                 }
             mTimer(step_delay);
         }
@@ -565,19 +578,6 @@ void classify() {
             best_diff = diff;
             best_class = i;
         }
-    }
-
-    if(best_class == 0){
-        whiteVal++;
-    }
-    if(best_class == 1){
-        alumVal++;
-    } 
-    if(best_class == 2){
-        blackVal++;
-    } 
-    if(best_class == 3){
-        steelVal++;
     }
 
     // Enqueue classification result using LinkedQueue
